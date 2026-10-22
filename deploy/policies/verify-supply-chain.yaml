@@ -1,0 +1,71 @@
+# Admission-time supply-chain gate. A ledger image is admitted only if it is
+# pinned by digest, signed by this repository's pipeline on main (Sigstore
+# keyless, recorded in Rekor), carries a signed SPDX SBOM, and carries a
+# signed vulnerability scan that reports no CRITICAL findings.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: verify-supply-chain
+  annotations:
+    policies.kyverno.io/title: Verify Software Supply Chain
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+spec:
+  validationActions: [Deny]
+  failurePolicy: Fail
+  webhookConfiguration:
+    timeoutSeconds: 30
+  evaluation:
+    background:
+      enabled: false
+  autogen:
+    podControllers:
+      controllers: [deployments]
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        aegis.dev/policy: enforced
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchImageReferences:
+    - glob: ghcr.io/ahmedelgmal310/aegis-ledger*
+  validationConfigurations:
+    mutateDigest: false
+    verifyDigest: true
+    required: true
+  attestors:
+    - name: pipeline
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subject: https://github.com/ahmedelgmal310/aegis-devsecops/.github/workflows/devsecops.yml@refs/heads/main
+        ctlog:
+          url: https://rekor.sigstore.dev
+  attestations:
+    - name: sbom
+      intoto:
+        type: https://spdx.dev/Document
+    - name: vulnScan
+      intoto:
+        type: https://cosign.sigstore.dev/attestation/vuln/v1
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.pipeline])).all(e, e > 0)
+      message: image must be signed by the Aegis pipeline on main
+    - expression: >-
+        images.containers.map(image, verifyAttestationSignatures(image, attestations.sbom, [attestors.pipeline])).all(e, e > 0)
+      message: image must carry an SPDX SBOM attestation signed by the Aegis pipeline
+    - expression: >-
+        images.containers.map(image, verifyAttestationSignatures(image, attestations.vulnScan, [attestors.pipeline])).all(e, e > 0)
+      message: image must carry a vulnerability scan attestation signed by the Aegis pipeline
+    - expression: >-
+        images.containers.map(image, extractPayload(image, attestations.vulnScan)).all(scan,
+          !has(scan.scanner.result.Results) ||
+          scan.scanner.result.Results.all(r,
+            !has(r.Vulnerabilities) || r.Vulnerabilities.all(v, v.Severity != 'CRITICAL')))
+      message: the signed vulnerability scan reports CRITICAL vulnerabilities

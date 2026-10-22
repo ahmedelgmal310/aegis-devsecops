@@ -1,0 +1,49 @@
+# Runtime detection rules for Aegis workloads, loaded on top of the default
+# Falco ruleset. They target behaviour that should never happen in a
+# distroless service: an interactive shell, discovery tooling, or reads of
+# credentials.
+
+- list: aegis_discovery_binaries
+  items: [whoami, id, hostname, uname, ifconfig, ip, netstat, ss, nc, ncat, netcat, nmap, curl, wget]
+
+- list: aegis_credential_files
+  items: [/etc/shadow, /etc/gshadow, /etc/sudoers, /root/.ssh/id_rsa, /root/.bash_history]
+
+- macro: aegis_workload
+  condition: (container and k8s.ns.name startswith "aegis")
+
+- rule: Aegis Shell Spawned in Workload
+  desc: >-
+    A shell started inside an Aegis container. The production image is
+    distroless and has no shell, so this indicates a compromised or
+    non-compliant workload.
+  condition: spawned_process and aegis_workload and proc.name in (shell_binaries)
+  output: >-
+    Shell spawned in Aegis workload (shell=%proc.name cmdline=%proc.cmdline
+    parent=%proc.pname user=%user.name pod=%k8s.pod.name ns=%k8s.ns.name
+    image=%container.image.repository container_id=%container.id)
+  priority: WARNING
+  tags: [aegis, container, mitre_execution, T1059]
+
+- rule: Aegis Discovery Tool Executed
+  desc: Reconnaissance or network tooling executed inside an Aegis container.
+  condition: spawned_process and aegis_workload and proc.name in (aegis_discovery_binaries)
+  output: >-
+    Discovery tool executed in Aegis workload (tool=%proc.name
+    cmdline=%proc.cmdline pod=%k8s.pod.name ns=%k8s.ns.name
+    image=%container.image.repository)
+  priority: NOTICE
+  tags: [aegis, container, mitre_discovery, T1082]
+
+- rule: Aegis Credential File Read
+  desc: A process inside an Aegis container read a credential or secret file.
+  condition: >-
+    open_read and aegis_workload and
+    (fd.name in (aegis_credential_files) or
+     fd.name startswith /var/run/secrets/kubernetes.io/serviceaccount)
+  output: >-
+    Credential file read in Aegis workload (file=%fd.name process=%proc.name
+    cmdline=%proc.cmdline pod=%k8s.pod.name ns=%k8s.ns.name
+    image=%container.image.repository)
+  priority: CRITICAL
+  tags: [aegis, container, mitre_credential_access, T1552]

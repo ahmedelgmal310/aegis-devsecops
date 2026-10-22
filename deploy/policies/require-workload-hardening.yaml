@@ -1,0 +1,46 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-workload-hardening
+  annotations:
+    policies.kyverno.io/title: Require Workload Hardening
+    policies.kyverno.io/category: Workload Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Controls on top of the restricted Pod Security Standard: images pinned
+      by digest, a read-only root filesystem, CPU and memory limits, and no
+      Kubernetes API token mounted into the pod.
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        aegis.dev/policy: enforced
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    - name: allContainers
+      expression: object.spec.containers + object.spec.?initContainers.orValue([])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c, c.image.contains('@sha256:'))
+      message: images must be pinned by an immutable sha256 digest, not a tag
+    - expression: >-
+        variables.allContainers.all(c,
+          c.?securityContext.?readOnlyRootFilesystem.orValue(false) == true)
+      message: containers must run with a read-only root filesystem
+    - expression: >-
+        variables.allContainers.all(c,
+          has(c.resources) && has(c.resources.limits) &&
+          'cpu' in c.resources.limits && 'memory' in c.resources.limits)
+      message: containers must declare CPU and memory limits
+    - expression: >-
+        object.spec.?automountServiceAccountToken.orValue(true) == false
+      message: pods must set automountServiceAccountToken to false

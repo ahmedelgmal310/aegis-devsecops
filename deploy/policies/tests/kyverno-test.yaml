@@ -1,0 +1,52 @@
+# Unit tests for the admission policies: `kyverno test deploy/policies/tests`
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aegis-admission-policies
+policies:
+  - ../restrict-image-registries.yaml
+  - ../require-workload-hardening.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - isValidatingPolicy: true
+    policy: restrict-image-registries
+    kind: Pod
+    resources: [good-pod, mutable-tag-pod, writable-rootfs-pod, no-limits-pod, api-token-pod]
+    result: pass
+  - isValidatingPolicy: true
+    policy: restrict-image-registries
+    kind: Pod
+    resources: [dockerhub-pod]
+    result: fail
+  - isValidatingPolicy: true
+    policy: restrict-image-registries
+    kind: Deployment
+    resources: [good-deployment]
+    result: pass
+  - isValidatingPolicy: true
+    policy: restrict-image-registries
+    kind: Deployment
+    resources: [dockerhub-deployment]
+    result: fail
+  - isValidatingPolicy: true
+    policy: require-workload-hardening
+    kind: Pod
+    resources: [good-pod, dockerhub-pod]
+    result: pass
+  - isValidatingPolicy: true
+    policy: require-workload-hardening
+    kind: Pod
+    resources: [mutable-tag-pod, writable-rootfs-pod, no-limits-pod, api-token-pod]
+    result: fail
+  - isValidatingPolicy: true
+    policy: require-workload-hardening
+    kind: Deployment
+    resources: [good-deployment]
+    result: pass
+  - isValidatingPolicy: true
+    policy: require-workload-hardening
+    kind: Deployment
+    resources: [dockerhub-deployment]
+    result: fail

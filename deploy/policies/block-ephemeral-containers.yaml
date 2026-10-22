@@ -1,0 +1,29 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: block-ephemeral-containers
+  annotations:
+    policies.kyverno.io/title: Block Ephemeral Containers
+    policies.kyverno.io/category: Workload Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      `kubectl debug` injects an arbitrary, unsigned image into a running pod,
+      bypassing every image control. It is not allowed in enforced namespaces.
+spec:
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        aegis.dev/policy: enforced
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods/ephemeralcontainers]
+  validations:
+    - expression: size(object.spec.?ephemeralContainers.orValue([])) == 0
+      message: ephemeral debug containers are not allowed in enforced namespaces

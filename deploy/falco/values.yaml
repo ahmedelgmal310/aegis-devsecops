@@ -1,0 +1,20 @@
+# Helm values for the falcosecurity/falco chart. The Aegis rules are added
+# with --set-file customRules.aegis-rules\.yaml=deploy/falco/aegis-rules.yaml
+driver:
+  kind: modern_ebpf
+
+# Line-buffered output so alerts reach the pod log immediately.
+tty: true
+
+falco:
+  json_output: true
+  json_include_output_property: true
+  priority: notice
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
