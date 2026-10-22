@@ -1,0 +1,5 @@
+# Deliberately insecure fixtures used to unit-test the admission policies.
+deploy/policies/tests/
+# Generated files.
+rendered/
+reports/

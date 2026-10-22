@@ -1,0 +1,29 @@
+# Shift-left: the same classes of checks as CI, on every local commit.
+#   pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.15.1
+    hooks:
+      - id: hadolint-docker
+        files: Dockerfile
+
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 3.3.30
+    hooks:
+      - id: checkov
+        args: [--framework, dockerfile, terraform, github_actions, --quiet, --compact]

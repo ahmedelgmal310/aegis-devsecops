@@ -1,0 +1,15 @@
+# Checkov scans the rendered Kustomize output (what actually gets deployed),
+# the Dockerfile, Terraform and the CI workflows.
+directory:
+  - app
+  - rendered
+  - deploy/argocd
+  - infra/terraform
+  - .github/workflows
+framework:
+  - kubernetes
+  - dockerfile
+  - terraform
+  - github_actions
+compact: true
+quiet: true

@@ -1,0 +1,6 @@
+# Every change, and especially changes to the pipeline, policies and
+# infrastructure, requires review from the platform owner.
+*                    @ahmedelgmal310
+/.github/            @ahmedelgmal310
+/deploy/policies/    @ahmedelgmal310
+/infra/              @ahmedelgmal310
