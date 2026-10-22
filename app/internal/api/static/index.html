@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aegis Ledger</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Aegis DevSecOps Platform</p>
+    <h1>Ledger API</h1>
+    <p>A small transactions service used to exercise the platform's supply-chain and runtime security controls.</p>
+    <ul>
+      <li><a href="/healthz">/healthz</a> liveness probe</li>
+      <li><a href="/readyz">/readyz</a> readiness probe</li>
+      <li><a href="/version">/version</a> build information</li>
+      <li><code>/api/v1/transactions</code> requires a bearer token</li>
+    </ul>
+  </main>
+</body>
+</html>
