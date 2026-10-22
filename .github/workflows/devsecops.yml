@@ -29,6 +29,7 @@ env:
   KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
   KYVERNO_CLI_IMAGE: ghcr.io/kyverno/kyverno-cli:v1.19.2@sha256:322ec5044d600930cb3af0e56dc33154a2d1d1fba58f4cadad3f47be7e78b11c
   FALCO_IMAGE: falcosecurity/falco:0.45.1@sha256:69e957f91b3a6beb5c82e2afae33ec3e4479dab2d4421475d288d0cd113cedf6
+  GOLANGCI_LINT_IMAGE: golangci/golangci-lint:v2.15.0@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d46863148c73cb88e7793af96c481
   TERRAFORM_IMAGE: hashicorp/terraform:1.17.0@sha256:4d1b496a256f2989bccdb04b9104a4ede97234b10fba90259e173e905ec4fb58
 
 jobs:
@@ -45,12 +46,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Gitleaks (full git history)
+        id: gitleaks
         run: |
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
             git /repo --redact --exit-code 1 \
             --report-format sarif --report-path /repo/gitleaks.sarif
       - name: Upload SARIF
-        if: always() && hashFiles('gitleaks.sarif') != ''
+        if: always() && steps.gitleaks.outcome != 'skipped'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: gitleaks.sarif
@@ -66,28 +68,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: app/go.sum
       - name: Semgrep (Go, secrets, Dockerfile, Kubernetes, GitHub Actions rules)
+        id: semgrep
         run: |
           docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src "$SEMGREP_IMAGE" \
             semgrep scan --metrics=off --error \
               --config p/golang --config p/secrets --config p/dockerfile \
               --config p/kubernetes --config p/github-actions \
               --sarif-output=semgrep.sarif
-      - name: gosec
-        working-directory: app
-        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.29.0 -fmt sarif -out ../gosec.sarif -stdout -verbose text ./...
+      - name: gosec (via golangci-lint, Go 1.27 aware)
+        id: gosec
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e GOCACHE=/tmp/go-build -e GOMODCACHE=/tmp/go-mod -e GOLANGCI_LINT_CACHE=/tmp/lint \
+            -v "$PWD:/repo" -w /repo/app "$GOLANGCI_LINT_IMAGE" \
+            golangci-lint run --enable-only gosec --output.text.path=stdout --output.sarif.path=/repo/gosec.sarif ./...
       - name: Upload Semgrep SARIF
-        if: always() && hashFiles('semgrep.sarif') != ''
+        if: always() && steps.semgrep.outcome != 'skipped'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: semgrep.sarif
           category: semgrep
       - name: Upload gosec SARIF
-        if: always() && hashFiles('gosec.sarif') != ''
+        if: always() && steps.gosec.outcome != 'skipped'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: gosec.sarif
@@ -115,12 +118,13 @@ jobs:
           docker run --rm -v "$PWD:/src" "$TRIVY_IMAGE" fs --quiet \
             --scanners vuln,license --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /src/app
       - name: Trivy SARIF report
+        id: trivy_sarif
         if: always()
         run: |
           docker run --rm -v "$PWD:/src" "$TRIVY_IMAGE" fs --quiet \
             --scanners vuln --format sarif --output /src/trivy-fs.sarif /src/app
       - name: Upload SARIF
-        if: always() && hashFiles('trivy-fs.sarif') != ''
+        if: always() && steps.trivy_sarif.outcome == 'success'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-fs.sarif
@@ -142,6 +146,7 @@ jobs:
           kubectl kustomize deploy/k8s/overlays/prod > rendered/prod.yaml
           kubectl kustomize deploy/k8s/overlays/ci > rendered/ci.yaml
       - name: Checkov (Kubernetes, Dockerfile, Terraform, GitHub Actions)
+        id: checkov
         run: |
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src "$CHECKOV_IMAGE" \
             --config-file .checkov.yaml --output cli --output sarif --output-file-path console,checkov
@@ -159,11 +164,11 @@ jobs:
       - name: Terraform fmt and validate
         working-directory: infra/terraform/aws
         run: |
-          docker run --rm -v "$PWD:/tf" -w /tf "$TERRAFORM_IMAGE" fmt -check -recursive
-          docker run --rm -v "$PWD:/tf" -w /tf -e TF_DATA_DIR=/tmp/tf --entrypoint sh "$TERRAFORM_IMAGE" \
-            -c 'terraform init -backend=false -input=false >/dev/null && terraform validate'
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/tf" -w /tf "$TERRAFORM_IMAGE" fmt -check -recursive
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e TF_DATA_DIR=/tmp/tf -v "$PWD:/tf" -w /tf \
+            --entrypoint sh "$TERRAFORM_IMAGE" -c 'terraform init -backend=false -input=false >/dev/null && terraform validate'
       - name: Upload SARIF
-        if: always() && hashFiles('checkov/results_sarif.sarif') != ''
+        if: always() && steps.checkov.outcome != 'skipped'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: checkov/results_sarif.sarif
@@ -281,6 +286,7 @@ jobs:
         run: echo "image=${IMAGE}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
       - name: Trivy image scan (gate on fixable HIGH/CRITICAL)
+        id: trivy_image
         if: github.event_name != 'pull_request'
         env:
           TRIVY_USERNAME: ${{ github.actor }}
@@ -361,13 +367,13 @@ jobs:
           digest=$(docker buildx imagetools inspect "${IMAGE}:e2e-unsigned" --format '{{json .Manifest.Digest}}' | tr -d '"')
           echo "image=${IMAGE}@${digest}" >> "$GITHUB_OUTPUT"
       - name: Upload SARIF
-        if: always() && hashFiles('out/trivy-image.sarif') != ''
+        if: always() && steps.trivy_image.outcome == 'success'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: out/trivy-image.sarif
           category: trivy-image
       - name: Upload SBOM and scan results
-        if: always() && hashFiles('out/*') != ''
+        if: always() && steps.trivy_image.outcome != 'skipped'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: supply-chain-artifacts
