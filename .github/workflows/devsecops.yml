@@ -149,10 +149,7 @@ jobs:
         id: checkov
         run: |
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src "$CHECKOV_IMAGE" \
-            --config-file .checkov.yaml --output cli
-          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src "$CHECKOV_IMAGE" \
-            --config-file .checkov.yaml --soft-fail --output sarif | sed -n '/^{/,$p' > checkov.sarif
-          jq empty checkov.sarif
+            --config-file .checkov.yaml --output cli --output sarif --output-file-path console,checkov.sarif
       - name: Hadolint (Dockerfile)
         run: docker run --rm -i "$HADOLINT_IMAGE" hadolint --failure-threshold warning - < app/Dockerfile
       - name: actionlint (workflow correctness)
