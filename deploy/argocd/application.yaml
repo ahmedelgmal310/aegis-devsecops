@@ -1,0 +1,29 @@
+# GitOps: Argo CD keeps the cluster in sync with the prod overlay on main.
+# Manual changes in the cluster are reverted (selfHeal) and removed
+# resources are pruned.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ledger
+  namespace: argocd
+spec:
+  project: aegis
+  source:
+    repoURL: https://github.com/ahmedelgmal310/aegis-devsecops.git
+    targetRevision: main
+    path: deploy/k8s/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aegis
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

@@ -1,0 +1,17 @@
+# Ephemeral end-to-end overlay. The pipeline points Argo CD at this path for
+# the commit under test and overrides the image with the freshly signed digest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/ahmedelgmal310/aegis-ledger
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+patches:
+  - target:
+      kind: Deployment
+      name: ledger
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1

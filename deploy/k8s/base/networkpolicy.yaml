@@ -1,0 +1,26 @@
+# Zero-trust networking: deny everything, then allow only what is needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: aegis
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# The ledger only accepts HTTP on its service port. It needs no egress at
+# all: no DNS, no internet, no Kubernetes API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ledger-allow-http
+  namespace: aegis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ledger
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP

@@ -1,0 +1,30 @@
+# Least-privilege Argo CD project: it can only deploy this repository into the
+# aegis namespace and may only create a Namespace at cluster scope.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: aegis
+  namespace: argocd
+spec:
+  description: Aegis ledger workload
+  sourceRepos:
+    - https://github.com/ahmedelgmal310/aegis-devsecops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: aegis
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: bitnami.com
+      kind: SealedSecret
