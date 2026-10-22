@@ -55,7 +55,12 @@ helm repo add kyverno https://kyverno.github.io/kyverno/ --force-update >/dev/nu
 helm upgrade --install kyverno kyverno/kyverno --namespace kyverno --create-namespace \
   --version "$KYVERNO_CHART_VERSION" --wait --timeout 10m >/dev/null
 ok "kyverno installed"
-kubectl apply -f "$ROOT_DIR/deploy/policies/" >/dev/null
+# The admission webhook needs a few seconds to get its TLS certificate.
+for attempt in $(seq 1 30); do
+  kubectl apply -f "$ROOT_DIR/deploy/policies/" >/dev/null 2>&1 && break
+  (( attempt == 30 )) && die "kyverno admission webhook never became ready"
+  sleep 5
+done
 for p in $(kubectl get validatingpolicies.policies.kyverno.io -o name) $(kubectl get imagevalidatingpolicies.policies.kyverno.io -o name); do
   kubectl wait "$p" --for=jsonpath='{.status.conditionStatus.ready}'=true --timeout=180s >/dev/null
   ok "policy ready: ${p#*/}"
