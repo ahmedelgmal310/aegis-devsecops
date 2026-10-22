@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
@@ -42,7 +43,10 @@ func recoverPanics(logger *slog.Logger) middleware {
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
-// requestID propagates a safe X-Request-ID or generates a new one.
+type requestIDKey struct{}
+
+// requestID propagates a safe X-Request-ID or generates a new one, and keeps
+// the validated value in the request context for logging.
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
@@ -51,10 +55,27 @@ func requestID(next http.Handler) http.Handler {
 			_, _ = rand.Read(b)
 			id = hex.EncodeToString(b)
 		}
-		r.Header.Set("X-Request-ID", id)
 		w.Header().Set("X-Request-ID", id)
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
 	})
+}
+
+// requestIDFrom returns the request ID with line breaks stripped, so a log
+// entry can never be split even if validation changes in the future.
+func requestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return strings.ReplaceAll(strings.ReplaceAll(id, "\n", ""), "\r", "")
+}
+
+// methodLabel bounds the method to a known set so clients cannot create
+// unlimited metric series or inject text into logs.
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return method
+	}
+	return "OTHER"
 }
 
 // securityHeaders applies a strict browser security policy to every response.
@@ -110,11 +131,12 @@ func (s *Server) observe(next http.Handler) http.Handler {
 			route = "unmatched"
 		}
 		elapsed := time.Since(start)
-		s.metrics.requests.WithLabelValues(r.Method, route, strconv.Itoa(rec.status)).Inc()
+		method := methodLabel(r.Method)
+		s.metrics.requests.WithLabelValues(method, route, strconv.Itoa(rec.status)).Inc()
 		s.metrics.duration.WithLabelValues(route).Observe(elapsed.Seconds())
 		s.cfg.Logger.Info("request",
-			"request_id", r.Header.Get("X-Request-ID"),
-			"method", r.Method,
+			"request_id", requestIDFrom(r.Context()),
+			"method", method,
 			"route", route,
 			"status", rec.status,
 			"duration_ms", elapsed.Milliseconds(),

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -259,6 +260,24 @@ func TestClientLimiterBoundsMemory(t *testing.T) {
 	}
 	if len(l.clients) > maxTrackedClients {
 		t.Fatalf("tracked %d clients", len(l.clients))
+	}
+}
+
+func TestMethodLabelIsBounded(t *testing.T) {
+	for in, want := range map[string]string{"GET": "GET", "DELETE": "DELETE", "BREW": "OTHER", "G\nET": "OTHER"} {
+		if got := methodLabel(in); got != want {
+			t.Fatalf("methodLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRequestIDFromStripsLineBreaks(t *testing.T) {
+	ctx := context.WithValue(context.Background(), requestIDKey{}, "abc\r\ndef")
+	if got := requestIDFrom(ctx); got != "abcdef" {
+		t.Fatalf("requestIDFrom = %q", got)
+	}
+	if got := requestIDFrom(context.Background()); got != "" {
+		t.Fatalf("requestIDFrom(empty) = %q", got)
 	}
 }
 
