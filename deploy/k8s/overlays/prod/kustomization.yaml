@@ -7,4 +7,4 @@ resources:
   - ../../base
 images:
   - name: ghcr.io/ahmedelgmal310/aegis-ledger
-    digest: sha256:3ffaec5c117c26687201ee8e9b7e7ccf00b555ff6e7d79e57953f9080478f33e
+    digest: sha256:5009139cfa28c853b6fb67cd13dc3d4df813f49279648461a28a3c477683d7d3
