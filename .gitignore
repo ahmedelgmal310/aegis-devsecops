@@ -1,0 +1,23 @@
+# Build and scan output
+/reports/
+/rendered/
+/checkov/
+*.sarif
+coverage.out
+app/ledger
+
+# Never commit private keys; only the public sealing certificate is tracked.
+*.key
+*.pem
+!deploy/sealed-secrets/sealing-cert.pem
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform.lock.hcl
+
+.DS_Store
+.idea/
+.vscode/
