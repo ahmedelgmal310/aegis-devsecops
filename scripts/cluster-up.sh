@@ -81,6 +81,7 @@ kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - >/
 fetch_verified \
   "https://raw.githubusercontent.com/argoproj/argo-cd/$ARGOCD_VERSION/manifests/install.yaml" \
   "$ARGOCD_INSTALL_SHA256" "$tmp/argocd.yaml"
+sed -i "s|image: public.ecr.aws/docker/library/redis:8.2.3-alpine|image: $ARGOCD_REDIS_IMAGE|" "$tmp/argocd.yaml"
 # shellcheck disable=SC2046
 preload $(grep -oE 'image: [^ ]+' "$tmp/argocd.yaml" | awk '{print $2}' | grep -v dex | sort -u)
 kubectl apply -n argocd --server-side --force-conflicts -f "$tmp/argocd.yaml" >/dev/null
