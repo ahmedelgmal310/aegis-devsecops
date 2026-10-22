@@ -11,20 +11,6 @@ SEALED_SECRETS_CERT_FILE="$ROOT_DIR/deploy/sealed-secrets/sealing-cert.pem"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# preload IMAGE...: pull on the host with retries and load into the kind node.
-# Public registries occasionally throttle anonymous pulls from CI runners.
-preload() {
-  for img in "$@"; do
-    for attempt in 1 2 3 4; do
-      docker pull -q "$img" >/dev/null 2>&1 && break
-      warn "pull failed for $img (attempt $attempt), retrying"
-      sleep $((attempt * 10))
-    done
-    kind load docker-image "$img" --name "$CLUSTER_NAME" >/dev/null 2>&1 \
-      || warn "could not preload $img; the node will pull it itself"
-  done
-}
-
 step "Kubernetes cluster ($KIND_NODE_IMAGE)"
 if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
   ok "kind cluster '$CLUSTER_NAME' already exists"
@@ -82,8 +68,6 @@ fetch_verified \
   "https://raw.githubusercontent.com/argoproj/argo-cd/$ARGOCD_VERSION/manifests/install.yaml" \
   "$ARGOCD_INSTALL_SHA256" "$tmp/argocd.yaml"
 sed -i "s|image: public.ecr.aws/docker/library/redis:8.2.3-alpine|image: $ARGOCD_REDIS_IMAGE|" "$tmp/argocd.yaml"
-# shellcheck disable=SC2046
-preload $(grep -oE 'image: [^ ]+' "$tmp/argocd.yaml" | awk '{print $2}' | grep -v dex | sort -u)
 kubectl apply -n argocd --server-side --force-conflicts -f "$tmp/argocd.yaml" >/dev/null
 for workload in deploy/argocd-redis deploy/argocd-repo-server statefulset/argocd-application-controller; do
   kubectl -n argocd rollout status "$workload" --timeout=300s
