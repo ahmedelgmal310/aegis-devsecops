@@ -149,7 +149,9 @@ jobs:
         id: checkov
         run: |
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src "$CHECKOV_IMAGE" \
-            --config-file .checkov.yaml --output cli --output sarif --output-file-path console,checkov
+            --config-file .checkov.yaml --output cli
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src "$CHECKOV_IMAGE" \
+            --config-file .checkov.yaml --soft-fail --output sarif > checkov.sarif
       - name: Hadolint (Dockerfile)
         run: docker run --rm -i "$HADOLINT_IMAGE" hadolint --failure-threshold warning - < app/Dockerfile
       - name: actionlint (workflow correctness)
@@ -171,7 +173,7 @@ jobs:
         if: always() && steps.checkov.outcome != 'skipped'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          sarif_file: checkov/results_sarif.sarif
+          sarif_file: checkov.sarif
           category: checkov
 
   policy:
