@@ -63,9 +63,9 @@ spec:
     - expression: >-
         images.containers.map(image, verifyAttestationSignatures(image, attestations.vulnScan, [attestors.pipeline])).all(e, e > 0)
       message: image must carry a vulnerability scan attestation signed by the Aegis pipeline
+    # extractPayload returns the in-toto statement; the Trivy report is its predicate.
     - expression: >-
-        images.containers.map(image, extractPayload(image, attestations.vulnScan)).all(scan,
-          !has(scan.scanner.result.Results) ||
-          scan.scanner.result.Results.all(r,
-            !has(r.Vulnerabilities) || r.Vulnerabilities.all(v, v.Severity != 'CRITICAL')))
+        images.containers.map(image, extractPayload(image, attestations.vulnScan)).all(s,
+          (has(s.predicate) ? s.predicate : s).scanner.result.?Results.orValue([]).all(r,
+            r.?Vulnerabilities.orValue([]).all(v, v.Severity != 'CRITICAL')))
       message: the signed vulnerability scan reports CRITICAL vulnerabilities
