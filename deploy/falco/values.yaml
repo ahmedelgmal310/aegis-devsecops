@@ -10,6 +10,9 @@ falco:
   json_output: true
   json_include_output_property: true
   priority: notice
+  # Evaluate every rule, so the Aegis rules still fire when a default rule
+  # (e.g. "Read sensitive file untrusted") matches the same event first.
+  rule_matching: all
 
 resources:
   requests:
