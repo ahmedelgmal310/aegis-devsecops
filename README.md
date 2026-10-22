@@ -92,6 +92,23 @@ raise an alert for every step.
 Then OWASP ZAP scans the running service, and only if everything passed is the
 image digest promoted to the prod overlay that Argo CD deploys.
 
+## Results from the latest release
+
+| Stage | Result |
+|---|---|
+| Secret scanning | 15 commits scanned, no leaks |
+| SAST | Semgrep: 111 rules, 0 findings · gosec: 0 issues · CodeQL: clean |
+| SCA | govulncheck: no vulnerabilities · Trivy: 0 HIGH/CRITICAL |
+| IaC | Checkov: 343 passed, 0 failed (Kubernetes, Dockerfile, Terraform, Actions) |
+| Policy tests | Kyverno CLI: 20/20 · Falco rules validated |
+| Unit tests | 92.9% coverage (gate 80%), race detector and fuzzing |
+| Image | Distroless, amd64 + arm64, 0 vulnerabilities, 19 SBOM packages |
+| Supply chain | Signature, SBOM and vulnerability attestations verified with cosign; SLSA provenance verified with `gh attestation verify` |
+| Admission attacks | 9/9 blocked, signed release accepted |
+| Runtime attacks | 3/3 detected by Falco |
+| DAST | OWASP ZAP: 67 passed, 0 warnings, 0 failures |
+| Delivery | Argo CD Synced / Healthy, digest promoted to prod |
+
 ## Run it yourself
 
 Requirements: Docker, [kind](https://kind.sigs.k8s.io/), kubectl, Helm 4 and
