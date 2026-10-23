@@ -7,4 +7,4 @@ resources:
   - ../../base
 images:
   - name: ghcr.io/ahmedelgmal310/aegis-responder
-    digest: sha256:d7b28091187c06c5f52529e3a61b3993097470786ada6d468331a7bacb086701
+    digest: sha256:cd132d25f2f4c72d210796489456621f28b580198359490f39b1f3f8375ac249
