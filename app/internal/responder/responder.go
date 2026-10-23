@@ -58,6 +58,7 @@ type Responder struct {
 
 // New returns a Responder.
 func New(pb *Playbook, kube Cluster, metrics *Metrics, log *slog.Logger) *Responder {
+	metrics.Initialize(pb)
 	return &Responder{
 		playbook: pb,
 		kube:     kube,
@@ -76,7 +77,7 @@ func (r *Responder) Handle(ctx context.Context, ev Event) Decision {
 		ruleName = rule.Name
 	}
 	decision := r.handle(ctx, ev, rule)
-	r.metrics.events.WithLabelValues(string(decision), ruleName, ev.Priority.String()).Inc()
+	r.metrics.events.WithLabelValues(string(decision), ruleName).Inc()
 	r.log.Info("falco alert handled",
 		"decision", decision, "falco_rule", ev.Rule, "playbook_rule", ruleName,
 		"priority", ev.Priority.String(), "namespace", ev.Namespace(), "pod", ev.Pod())
@@ -124,14 +125,15 @@ func (r *Responder) handle(ctx context.Context, ev Event, rule *Rule) Decision {
 // and only then spends time on evidence.
 func (r *Responder) contain(ctx context.Context, ev Event, rule *Rule, pod *Pod, key string) Decision {
 	incident := newIncidentID(r.now())
-	quarantinedAt := r.now().UTC()
-
-	err := r.quarantine(ctx, ev, rule, pod, incident, quarantinedAt)
+	err := r.quarantine(ctx, ev, rule, pod, incident, r.now().UTC())
 	r.metrics.action(ActionQuarantine, err)
 	if err != nil {
 		r.log.Error("quarantine failed", "namespace", pod.Metadata.Namespace, "pod", pod.Metadata.Name, "error", err)
 		return DecisionFailed
 	}
+	// Measured once the API server has accepted the patch: from here on the
+	// NetworkPolicy applies to the pod.
+	quarantinedAt := r.now().UTC()
 	r.markHandled(key)
 	containment := quarantinedAt.Sub(ev.Time)
 	if containment >= 0 {

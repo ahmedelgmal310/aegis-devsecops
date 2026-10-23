@@ -111,6 +111,14 @@ else
   die "baseline failed: the drill pod cannot reach $PROBE_URL, the isolation test would be meaningless"
 fi
 
+# Prometheus must have scraped the responder's zero-valued counters before
+# the attack, otherwise the first incident is a new series, not an increase.
+scraped() {
+  kubectl get --raw "/api/v1/namespaces/monitoring/services/prometheus-server:80/proxy/api/v1/query?query=count(aegis_responder_events_total)"     | jq -e '.data.result[0].value[1] | tonumber > 0' >/dev/null
+}
+for _ in $(seq 1 45); do scraped 2>/dev/null && break; sleep 2; done
+scraped 2>/dev/null && ok "prometheus is scraping the responder" || warn "responder metrics not scraped yet"
+
 since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 attack_started=$SECONDS
 attack() {

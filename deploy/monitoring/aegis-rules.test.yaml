@@ -8,7 +8,7 @@ tests:
   - name: a contained threat raises a critical alert
     interval: 15s
     input_series:
-      - series: 'aegis_responder_events_total{decision="contained",playbook_rule="contain-interactive-shell",priority="warning"}'
+      - series: 'aegis_responder_events_total{decision="contained",playbook_rule="contain-interactive-shell"}'
         values: "0 0 1 1 1"
       - series: 'up{job="kubernetes-pods",app_kubernetes_io_name="aegis-responder"}'
         values: "1x10"
@@ -32,7 +32,7 @@ tests:
   - name: a failed containment pages immediately
     interval: 15s
     input_series:
-      - series: 'aegis_responder_events_total{decision="failed",playbook_rule="contain-credential-access",priority="critical"}'
+      - series: 'aegis_responder_events_total{decision="failed",playbook_rule="contain-credential-access"}'
         values: "0 1"
     alert_rule_test:
       - eval_time: 30s

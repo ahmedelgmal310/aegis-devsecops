@@ -26,8 +26,8 @@ func NewMetrics() *Metrics {
 		registry: prometheus.NewRegistry(),
 		events: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "aegis_responder_events_total",
-			Help: "Falco alerts handled, by decision, playbook rule and priority.",
-		}, []string{"decision", "playbook_rule", "priority"}),
+			Help: "Falco alerts handled, by decision and playbook rule.",
+		}, []string{"decision", "playbook_rule"}),
 		actions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "aegis_responder_actions_total",
 			Help: "Response actions executed, by action and result.",
@@ -52,6 +52,28 @@ func NewMetrics() *Metrics {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 	return m
+}
+
+// Initialize creates every series at zero, so the first incident shows up as
+// an increase in Prometheus instead of a brand-new series (which increase()
+// cannot see).
+func (m *Metrics) Initialize(pb *Playbook) {
+	rules := []string{"none"}
+	for _, r := range pb.Rules {
+		rules = append(rules, r.Name)
+	}
+	for _, d := range []Decision{DecisionContained, DecisionRecorded, DecisionDuplicate, DecisionIgnored, DecisionRejected, DecisionFailed} {
+		for _, r := range rules {
+			m.events.WithLabelValues(string(d), r)
+		}
+	}
+	for _, a := range []Action{ActionRecord, ActionQuarantine, ActionEvidence, ActionTerminate} {
+		m.actions.WithLabelValues(string(a), "ok")
+		m.actions.WithLabelValues(string(a), "error")
+	}
+	for _, reason := range []string{"unauthenticated", "rate_limited", "too_large", "invalid", "queue_full"} {
+		m.dropped.WithLabelValues(reason)
+	}
 }
 
 // Handler serves the metrics in the Prometheus exposition format.

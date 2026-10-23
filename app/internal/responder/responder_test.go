@@ -247,7 +247,7 @@ func TestContainShellInReplicaSetPod(t *testing.T) {
 	if n := histogramCount(t, m.containment); n != 1 {
 		t.Errorf("containment observations = %d, want 1", n)
 	}
-	if v := value(t, m.events.WithLabelValues("contained", "contain-interactive-shell", "warning")); v != 1 {
+	if v := value(t, m.events.WithLabelValues("contained", "contain-interactive-shell")); v != 1 {
 		t.Errorf("contained events = %v", v)
 	}
 	if v := value(t, m.actions.WithLabelValues("quarantine", "ok")); v != 1 {
@@ -465,4 +465,26 @@ func histogramCount(t *testing.T, h prometheus.Histogram) uint64 {
 		t.Fatal(err)
 	}
 	return m.Histogram.GetSampleCount()
+}
+
+func TestMetricsStartAtZero(t *testing.T) {
+	_, m := newTestResponder(t, newFakeCluster())
+	mfs, err := m.registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	series := 0
+	for _, mf := range mfs {
+		if mf.GetName() == "aegis_responder_events_total" {
+			series = len(mf.GetMetric())
+		}
+	}
+	// 6 decisions x (4 playbook rules + "none"): the first incident must be an
+	// increase from 0, not a new series that increase() cannot see.
+	if series != 30 {
+		t.Errorf("pre-initialised event series = %d, want 30", series)
+	}
+	if v := value(t, m.events.WithLabelValues("contained", "contain-credential-access")); v != 0 {
+		t.Errorf("initial value = %v", v)
+	}
 }
