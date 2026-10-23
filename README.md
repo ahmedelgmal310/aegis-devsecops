@@ -11,7 +11,10 @@ and vulnerability report, the cluster refuses anything that cannot prove where
 it came from, and Falco watches what happens after deployment.
 
 The pipeline does not just scan. On every release it **attacks its own
-cluster** and fails if any attack gets through.
+cluster** and fails if any attack gets through. And when an attack does reach
+a running container, the cluster **fights back on its own**: the compromised
+pod is isolated within milliseconds of detection, its evidence is preserved,
+and a clean replacement takes over.
 
 ## How it works
 
@@ -46,6 +49,9 @@ flowchart LR
     kyv --> pod[ledger pod<br/>distroless, non-root,<br/>read-only, no egress]
     ss[Sealed Secrets] -->|decrypts token| pod
     falco[Falco eBPF] -.runtime detection.-> pod
+    falco -->|alerts over mTLS| resp[aegis-responder]
+    resp -->|"quarantine, replace,<br/>evidence, terminate"| api
+    resp -.metrics.-> prom[Prometheus<br/>alerting rules]
 ```
 
 ## Security controls
@@ -66,6 +72,8 @@ flowchart LR
 | Secrets | Encrypted in git, decrypted only inside the cluster, mounted as a file | Sealed Secrets (bring-your-own key) |
 | Delivery | Git is the source of truth, drift is reverted automatically | Argo CD (self-heal, prune) |
 | Runtime | Shells, discovery tools and credential reads are detected | Falco (modern eBPF) + custom rules |
+| Response | Compromised pods are isolated, preserved as evidence, replaced and terminated automatically | aegis-responder (Go), NetworkPolicy, Argo CD |
+| Observability | Every incident is a metric and a Prometheus alert; alert rules are unit-tested | Prometheus, promtool |
 | Application | Auth, validation, rate limiting, strict headers, verified by DAST | Go, OWASP ZAP |
 | Pipeline | Actions pinned to SHAs, images pinned to digests, least-privilege tokens | Scorecard, CODEOWNERS |
 | Cloud | ECR with KMS and immutable tags, GitHub OIDC role, no static keys | Terraform, scanned by Checkov |
@@ -92,6 +100,52 @@ raise an alert for every step.
 Then OWASP ZAP scans the running service, and only if everything passed is the
 image digest promoted to the prod overlay that Argo CD deploys.
 
+## The cluster fights back: automated incident response
+
+Detection alone leaves an attacker with a working shell until someone reads
+the alert. Aegis closes that gap with **aegis-responder**, a small Go service
+([`app/internal/responder`](app/internal/responder)) that turns Falco alerts
+into action, driven by a declarative playbook
+([`deploy/response/base/playbook.json`](deploy/response/base/playbook.json)):
+
+```mermaid
+flowchart LR
+    atk([Attacker in a container]) -->|shell, cat /etc/shadow| pod[Pod]
+    falco[Falco eBPF] -.detects.-> pod
+    falco -->|"alert (mutual TLS)"| resp[aegis-responder]
+    resp -->|1. quarantine| np[NetworkPolicy:<br/>no traffic]
+    resp -->|2. evidence| cm[(Immutable ConfigMap:<br/>alert, pod, logs)]
+    np --> rs[3. Deployment starts<br/>a clean replacement]
+    resp -->|4. after forensic hold| del[Terminate]
+    resp -.-> prom[Prometheus alert]
+```
+
+1. **Quarantine.** The pod gets `aegis.dev/quarantine=true` and loses the
+   labels its ReplicaSet selects on. A NetworkPolicy cuts all of its traffic,
+   the Service stops routing to it, and the Deployment starts a clean pod.
+2. **Evidence.** The alert, the full pod object and recent logs are written to
+   an immutable ConfigMap. The responder may create evidence but never read,
+   edit or delete it.
+3. **Terminate.** The isolated pod stays alive for a forensic hold (live
+   inspection without network), then a stateless reconcile loop deletes it,
+   with a UID precondition so it never touches a newer pod.
+4. **Observe.** Every decision is a metric; `AegisRuntimeThreatContained`,
+   `AegisContainmentFailed` and `AegisResponderDown` are Prometheus alerts
+   unit-tested with `promtool`.
+
+The responder is treated as a high-value target itself: it only accepts
+alerts from Falco's client certificate (mutual TLS), only from the `falco`
+namespace, only for allowlisted namespaces and only when the alert's
+container ID matches the live pod. It has namespaced Roles only (no
+ClusterRole, no Secrets, no exec), its image is signed and verified at
+admission like the workload, and the admission drill proves no other pod can
+borrow its API identity. Reconnaissance (`whoami`, `wget`) is recorded, not
+contained, so noise never kills healthy pods.
+
+The runtime drill ([`scripts/attack-runtime.sh`](scripts/attack-runtime.sh))
+proves the whole loop on every release: detect, contain, recover, preserve,
+clean up and alert.
+
 ## Results from the latest release
 
 | Stage | Result |
@@ -99,13 +153,14 @@ image digest promoted to the prod overlay that Argo CD deploys.
 | Secret scanning | 15 commits scanned, no leaks |
 | SAST | Semgrep: 111 rules, 0 findings · gosec: 0 issues · CodeQL: clean |
 | SCA | govulncheck: no vulnerabilities · Trivy: 0 HIGH/CRITICAL |
-| IaC | Checkov: 343 passed, 0 failed (Kubernetes, Dockerfile, Terraform, Actions) |
-| Policy tests | Kyverno CLI: 20/20 · Falco rules validated |
-| Unit tests | 92.9% coverage (gate 80%), race detector and fuzzing |
-| Image | Distroless, amd64 + arm64, 0 vulnerabilities, 19 SBOM packages |
+| IaC | Checkov: 586 passed, 0 failed (Kubernetes, Dockerfile, Terraform, Actions) |
+| Policy tests | Kyverno CLI · Falco rules validated · promtool: 6 alerting rules unit-tested |
+| Unit tests | 88.9% coverage (gate 80%), race detector and fuzzing |
+| Images | Ledger and responder: distroless, amd64 + arm64, 0 vulnerabilities, signed SBOMs |
 | Supply chain | Signature, SBOM and vulnerability attestations verified with cosign; SLSA provenance verified with `gh attestation verify` |
-| Admission attacks | 9/9 blocked, signed release accepted |
+| Admission attacks | 10/10 blocked, signed release accepted |
 | Runtime attacks | 3/3 detected by Falco |
+| Automated response | Pod isolated **11 ms** after detection, clean replacement Ready, evidence preserved (immutable), pod terminated after the hold, Prometheus alert fired |
 | DAST | OWASP ZAP: 67 passed, 0 warnings, 0 failures |
 | Delivery | Argo CD Synced / Healthy, digest promoted to prod |
 
@@ -117,7 +172,7 @@ about 6 GB of free memory.
 ```bash
 git clone https://github.com/ahmedelgmal310/aegis-devsecops.git
 cd aegis-devsecops
-make demo      # cluster + platform, GitOps deploy, smoke test, attacks, DAST
+make demo      # cluster + platform, GitOps deploy, smoke test, attacks + response, DAST
 make down      # delete the cluster
 ```
 
@@ -141,10 +196,12 @@ gh attestation verify "oci://$IMAGE" --repo ahmedelgmal310/aegis-devsecops
 ## Repository layout
 
 ```
-app/                    Go service (ledger API), Dockerfile, tests, fuzz test
+app/                    Go services (ledger API, incident responder), Dockerfile, tests, fuzz test
 deploy/k8s/             Kustomize base + overlays (ci, prod)
 deploy/policies/        Kyverno policies and their unit tests
 deploy/falco/           Falco values and custom runtime rules
+deploy/response/        Incident responder: playbook, RBAC, NetworkPolicies, overlays
+deploy/monitoring/      Prometheus values, alerting rules and their unit tests
 deploy/argocd/          Argo CD project and application
 deploy/dast/            OWASP ZAP rule thresholds
 infra/terraform/aws/    ECR, KMS and GitHub OIDC role
@@ -156,7 +213,7 @@ docs/                   Threat model and runbook
 ## Tech stack
 
 Go 1.27 · Docker Buildx · GitHub Actions · Kubernetes 1.36 (kind) · Kyverno 1.19 ·
-Falco 0.45 · Argo CD 3.5 · Sealed Secrets · Sigstore cosign 3 · Syft · Trivy ·
+Falco 0.45 · Prometheus 3.15 · Argo CD 3.5 · Sealed Secrets · Sigstore cosign 3 · Syft · Trivy ·
 Semgrep · CodeQL · gosec · govulncheck · Gitleaks · Checkov · Hadolint ·
 OWASP ZAP · Terraform · OpenSSF Scorecard
 
