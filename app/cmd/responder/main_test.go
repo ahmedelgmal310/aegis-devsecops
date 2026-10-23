@@ -85,6 +85,15 @@ func TestLoadConfig(t *testing.T) {
 	if !cfg.holdOverrideIsSet || cfg.holdSeconds != 30 || cfg.opsAddr != ":9999" || len(cfg.allowedClients) != 2 {
 		t.Errorf("config = %+v", cfg)
 	}
+	t.Setenv("RESPONDER_MODE", "notify")
+	if cfg, err := loadConfig(":9999"); err != nil || !cfg.notifyOnly {
+		t.Errorf("RESPONDER_MODE=notify: %+v, %v", cfg, err)
+	}
+	t.Setenv("RESPONDER_MODE", "chaos")
+	if _, err := loadConfig(":9999"); err == nil {
+		t.Error("unknown RESPONDER_MODE must be rejected")
+	}
+	t.Setenv("RESPONDER_MODE", "")
 	for _, bad := range []string{"-1", "soon"} {
 		t.Setenv("RESPONDER_HOLD_SECONDS", bad)
 		if _, err := loadConfig(":9999"); err == nil {

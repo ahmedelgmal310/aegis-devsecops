@@ -16,7 +16,8 @@
     {
       "name": "contain-critical",
       "match": {"minPriority": "Critical", "tags": ["container"]},
-      "actions": ["quarantine", "evidence", "terminate"]
+      "actions": ["quarantine", "evidence", "terminate"],
+      "mode": "notify"
     },
     {
       "name": "record-discovery",

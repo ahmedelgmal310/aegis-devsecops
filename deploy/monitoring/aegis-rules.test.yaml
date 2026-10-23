@@ -29,6 +29,27 @@ tests:
         alertname: AegisResponderDown
         exp_alerts: []
 
+  - name: a notify-only rule raises a review warning, not a page
+    interval: 1m
+    input_series:
+      - series: 'aegis_responder_events_total{decision="notified",playbook_rule="contain-critical"}'
+        values: "0 0 1 1"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AegisWouldHaveContained
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              playbook_rule: contain-critical
+            exp_annotations:
+              summary: Notify-only rule contain-critical would have contained a pod
+              description: >-
+                Review the WouldQuarantine Event. A true positive means the rule is
+                ready for enforce mode; a false positive means it needs tuning first.
+      - eval_time: 3m
+        alertname: AegisRuntimeThreatContained
+        exp_alerts: []
+
   - name: a failed containment pages immediately
     interval: 15s
     input_series:

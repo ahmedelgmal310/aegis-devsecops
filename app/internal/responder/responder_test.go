@@ -292,9 +292,9 @@ func TestDecisions(t *testing.T) {
 			want:  DecisionIgnored,
 		},
 		{
-			name:  "unknown critical container alert is contained by the catch-all rule",
+			name:  "the broad catch-all rule is notify-only: it reports but does not contain",
 			event: testEvent("Some Critical Rule", "Critical", "aegis-drill", "web-1"),
-			want:  DecisionContained,
+			want:  DecisionNotified,
 		},
 		{
 			name:  "pod already gone",
@@ -479,12 +479,50 @@ func TestMetricsStartAtZero(t *testing.T) {
 			series = len(mf.GetMetric())
 		}
 	}
-	// 6 decisions x (4 playbook rules + "none"): the first incident must be an
+	// 7 decisions x (4 playbook rules + "none"): the first incident must be an
 	// increase from 0, not a new series that increase() cannot see.
-	if series != 30 {
-		t.Errorf("pre-initialised event series = %d, want 30", series)
+	if series != 35 {
+		t.Errorf("pre-initialised event series = %d, want 35", series)
 	}
 	if v := value(t, m.events.WithLabelValues("contained", "contain-credential-access")); v != 0 {
 		t.Errorf("initial value = %v", v)
+	}
+}
+
+func TestNotifyOnlyChangesNothing(t *testing.T) {
+	kube := newFakeCluster()
+	kube.pods["aegis-drill/web-1"] = testPod("aegis-drill", "web-1")
+	r, m := newTestResponder(t, kube)
+	r.playbook.NotifyOnly = true // RESPONDER_MODE=notify
+
+	ev := testEvent("Aegis Shell Spawned in Workload", "Warning", "aegis-drill", "web-1")
+	if got := r.Handle(context.Background(), ev); got != DecisionNotified {
+		t.Fatalf("decision = %s, want notified", got)
+	}
+	if len(kube.patches) != 0 || len(kube.configMaps) != 0 || len(kube.deleted) != 0 {
+		t.Fatalf("notify-only must not touch the cluster: patches=%d configmaps=%d deleted=%d",
+			len(kube.patches), len(kube.configMaps), len(kube.deleted))
+	}
+	if len(kube.events) != 1 || kube.events[0].Reason != "WouldQuarantine" ||
+		!strings.Contains(kube.events[0].Message, "contain-interactive-shell") {
+		t.Fatalf("expected one WouldQuarantine event naming the rule, got %+v", kube.events)
+	}
+	if v := value(t, m.events.WithLabelValues("notified", "contain-interactive-shell")); v != 1 {
+		t.Errorf("notified events = %v", v)
+	}
+
+	// The same pod is reported once, not once per alert.
+	if got := r.Handle(context.Background(), ev); got != DecisionDuplicate {
+		t.Errorf("second alert = %s, want duplicate", got)
+	}
+	if len(kube.events) != 1 {
+		t.Errorf("events = %d, want 1", len(kube.events))
+	}
+
+	// Switching back to enforce on a new pod contains it.
+	r.playbook.NotifyOnly = false
+	kube.pods["aegis-drill/web-2"] = testPod("aegis-drill", "web-2")
+	if got := r.Handle(context.Background(), testEvent("Aegis Shell Spawned in Workload", "Warning", "aegis-drill", "web-2")); got != DecisionContained {
+		t.Errorf("enforce decision = %s, want contained", got)
 	}
 }

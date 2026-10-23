@@ -32,6 +32,24 @@ func TestShippedPlaybook(t *testing.T) {
 	if r := pb.Decide(Event{Rule: "Some Rule", Priority: PriorityCritical}); r != nil {
 		t.Errorf("critical alert without the container tag must not match, got %s", r.Name)
 	}
+	// High-confidence rules enforce; the broad catch-all only notifies.
+	for name, want := range map[string]Mode{
+		"contain-credential-access": ModeEnforce,
+		"contain-interactive-shell": ModeEnforce,
+		"contain-critical":          ModeNotify,
+	} {
+		for i := range pb.Rules {
+			if pb.Rules[i].Name == name {
+				if got := pb.ModeOf(&pb.Rules[i]); got != want {
+					t.Errorf("%s mode = %s, want %s", name, got, want)
+				}
+			}
+		}
+	}
+	pb.NotifyOnly = true
+	if got := pb.ModeOf(&pb.Rules[0]); got != ModeNotify {
+		t.Errorf("the global switch must force notify, got %s", got)
+	}
 }
 
 func TestPlaybookValidation(t *testing.T) {
@@ -49,6 +67,7 @@ func TestPlaybookValidation(t *testing.T) {
 		"unknown action":        `{` + valid + `,"rules":[{"name":"r","match":{"rules":["X"]},"actions":["nuke"]}]}`,
 		"terminate unisolated":  `{` + valid + `,"rules":[{"name":"r","match":{"rules":["X"]},"actions":["evidence","terminate"]}]}`,
 		"bad priority":          `{` + valid + `,"rules":[{"name":"r","match":{"minPriority":"Huge"},"actions":["record"]}]}`,
+		"unknown mode":          `{` + valid + `,"rules":[{"name":"r","match":{"rules":["X"]},"actions":["record"],"mode":"yolo"}]}`,
 		"not json":              `{`,
 	}
 	dir := t.TempDir()

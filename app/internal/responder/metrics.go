@@ -62,7 +62,7 @@ func (m *Metrics) Initialize(pb *Playbook) {
 	for _, r := range pb.Rules {
 		rules = append(rules, r.Name)
 	}
-	for _, d := range []Decision{DecisionContained, DecisionRecorded, DecisionDuplicate, DecisionIgnored, DecisionRejected, DecisionFailed} {
+	for _, d := range []Decision{DecisionContained, DecisionRecorded, DecisionNotified, DecisionDuplicate, DecisionIgnored, DecisionRejected, DecisionFailed} {
 		for _, r := range rules {
 			m.events.WithLabelValues(string(d), r)
 		}

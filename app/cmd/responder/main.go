@@ -37,6 +37,7 @@ type config struct {
 	allowedClients    []string
 	holdSeconds       int
 	holdOverrideIsSet bool
+	notifyOnly        bool
 	reconcileEvery    time.Duration
 	queueSize         int
 }
@@ -71,6 +72,13 @@ func loadConfig(opsAddr string) (config, error) {
 		reconcileEvery: 5 * time.Second,
 		queueSize:      1024,
 	}
+	switch mode := os.Getenv("RESPONDER_MODE"); mode {
+	case "", "enforce":
+	case "notify":
+		cfg.notifyOnly = true
+	default:
+		return cfg, fmt.Errorf("RESPONDER_MODE must be enforce or notify, got %q", mode)
+	}
 	if v := os.Getenv("RESPONDER_HOLD_SECONDS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
@@ -89,6 +97,7 @@ func run(logger *slog.Logger, cfg config) error {
 	if cfg.holdOverrideIsSet {
 		pb.QuarantineHoldSeconds = cfg.holdSeconds
 	}
+	pb.NotifyOnly = cfg.notifyOnly
 	tlsConfig, err := mutualTLS(cfg.cert, cfg.key, cfg.ca)
 	if err != nil {
 		return err
@@ -136,6 +145,7 @@ func run(logger *slog.Logger, cfg config) error {
 	logger.Info("responder listening",
 		"alerts_addr", cfg.addr, "ops_addr", cfg.opsAddr, "version", version, "commit", commit,
 		"protected_namespaces", pb.Namespaces, "hold_seconds", pb.QuarantineHoldSeconds,
+		"notify_only", pb.NotifyOnly,
 		"playbook_rules", len(pb.Rules))
 
 	var runErr error

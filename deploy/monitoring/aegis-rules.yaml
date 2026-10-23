@@ -14,6 +14,16 @@ groups:
             last 5 minutes. Evidence is in the aegis-response namespace
             (kubectl -n aegis-response get configmaps -l aegis.dev/incident).
 
+      - alert: AegisWouldHaveContained
+        expr: sum by (playbook_rule) (increase(aegis_responder_events_total{decision="notified"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notify-only rule {{ $labels.playbook_rule }} would have contained a pod"
+          description: >-
+            Review the WouldQuarantine Event. A true positive means the rule is
+            ready for enforce mode; a false positive means it needs tuning first.
+
       - alert: AegisContainmentFailed
         expr: sum(increase(aegis_responder_events_total{decision="failed"}[5m])) > 0
         labels:

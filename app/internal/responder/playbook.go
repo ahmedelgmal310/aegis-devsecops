@@ -28,6 +28,20 @@ const (
 	ActionTerminate Action = "terminate"
 )
 
+// Mode decides whether a containing rule acts or only reports.
+type Mode string
+
+// Rule modes.
+const (
+	// ModeEnforce runs the rule's actions. It is the default.
+	ModeEnforce Mode = "enforce"
+	// ModeNotify is a dry run: the responder records what it would have done
+	// (a WouldQuarantine Event and a metric) but leaves the pod untouched.
+	// New rules start here until they have proven they do not fire on
+	// legitimate behaviour.
+	ModeNotify Mode = "notify"
+)
+
 // Match selects the alerts a response rule applies to. Every field that is
 // set must match.
 type Match struct {
@@ -41,6 +55,8 @@ type Rule struct {
 	Name    string   `json:"name"`
 	Match   Match    `json:"match"`
 	Actions []Action `json:"actions"`
+	// Mode is enforce (default) or notify.
+	Mode Mode `json:"mode,omitempty"`
 }
 
 // Playbook is the responder's configuration: where it may act and how.
@@ -55,6 +71,11 @@ type Playbook struct {
 	QuarantineHoldSeconds int `json:"quarantineHoldSeconds"`
 	// Rules are evaluated in order; the first match wins.
 	Rules []Rule `json:"rules"`
+
+	// NotifyOnly turns every rule into a dry run, whatever its own mode. It
+	// is set from RESPONDER_MODE=notify, a single switch to roll the
+	// responder out to a new cluster without it touching any pod.
+	NotifyOnly bool `json:"-"`
 }
 
 // LoadPlaybook reads and validates a JSON playbook.
@@ -100,6 +121,11 @@ func (pb *Playbook) Validate() error {
 		if len(r.Actions) == 0 {
 			return fmt.Errorf("playbook: rule %q has no actions", r.Name)
 		}
+		switch r.Mode {
+		case "", ModeEnforce, ModeNotify:
+		default:
+			return fmt.Errorf("playbook: rule %q has unknown mode %q (use enforce or notify)", r.Name, r.Mode)
+		}
 		for _, a := range r.Actions {
 			switch a {
 			case ActionRecord, ActionQuarantine, ActionEvidence, ActionTerminate:
@@ -134,6 +160,14 @@ func (pb *Playbook) Decide(ev Event) *Rule {
 		}
 	}
 	return nil
+}
+
+// ModeOf returns the mode a rule effectively runs in.
+func (pb *Playbook) ModeOf(r *Rule) Mode {
+	if pb.NotifyOnly || r.Mode == ModeNotify {
+		return ModeNotify
+	}
+	return ModeEnforce
 }
 
 // Contains reports whether the rule runs the action.

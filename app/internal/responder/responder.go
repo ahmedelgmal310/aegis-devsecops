@@ -38,6 +38,7 @@ type Decision string
 const (
 	DecisionContained Decision = "contained" // pod isolated (and evidence taken)
 	DecisionRecorded  Decision = "recorded"  // Event recorded, no containment
+	DecisionNotified  Decision = "notified"  // dry run: would have contained
 	DecisionDuplicate Decision = "duplicate" // pod is already contained
 	DecisionIgnored   Decision = "ignored"   // not in scope of the playbook
 	DecisionRejected  Decision = "rejected"  // alert does not match the live pod
@@ -118,7 +119,24 @@ func (r *Responder) handle(ctx context.Context, ev Event, rule *Rule) Decision {
 		r.markHandled(key)
 		return DecisionDuplicate
 	}
+	if r.playbook.ModeOf(rule) == ModeNotify {
+		return r.notify(ctx, ev, rule, pod, key)
+	}
 	return r.contain(ctx, ev, rule, pod, key)
+}
+
+// notify is the dry run of contain: it reports exactly what would have
+// happened, once per pod, and changes nothing.
+func (r *Responder) notify(ctx context.Context, ev Event, rule *Rule, pod *Pod, key string) Decision {
+	r.markHandled(key)
+	err := r.event(ctx, pod, "Warning", "WouldQuarantine",
+		fmt.Sprintf("Notify-only: Falco rule %q matched playbook rule %q, which would have run %v. No action taken.",
+			ev.Rule, rule.Name, rule.Actions))
+	r.metrics.action(ActionRecord, err)
+	r.log.Warn("containment skipped (notify-only)",
+		"namespace", pod.Metadata.Namespace, "pod", pod.Metadata.Name,
+		"falco_rule", ev.Rule, "playbook_rule", rule.Name)
+	return DecisionNotified
 }
 
 // contain isolates the pod first, because that is what stops the attacker,
