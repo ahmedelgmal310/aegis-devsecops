@@ -65,6 +65,7 @@ Falco ↔ responder (mutual TLS), responder ↔ cluster API (namespaced RBAC).
 | T20 | Evidence destroyed when the pod is deleted | Repudiation | Alert, pod object and logs written to an immutable ConfigMap before termination; the responder can create but not read, edit or delete evidence | `responder.go`, `deploy/response/base/rbac.yaml` |
 | T21 | Forged alerts used to make the responder kill healthy pods | Spoofing / Denial of service | Mutual TLS (only Falco's client certificate is accepted), ingress NetworkPolicy from the `falco` namespace only, namespace allowlist, container-ID check, rate limit and bounded queue | `server.go`, `deploy/response/base/networkpolicy.yaml` |
 | T22 | Compromised responder abused against the cluster | Elevation | Namespaced Roles only (no ClusterRole, no Secrets, no exec), signed image verified at admission, restricted PSA, only egress is the API server; the API-token exception is tied to its service account and proven not borrowable | `rbac.yaml`, `require-workload-hardening.yaml`, `attack-admission.sh` |
+| T23 | False positive takes a healthy workload down | Denial of service | Quarantine affects one pod while the Deployment replacement serves traffic; containment only on high-confidence signals; notify-only mode per rule and globally (`RESPONDER_MODE=notify`) with the `AegisWouldHaveContained` review alert | `playbook.go`, `playbook.json`, `aegis-rules.yaml` |
 
 ## OWASP Top 10 CI/CD Security Risks
 

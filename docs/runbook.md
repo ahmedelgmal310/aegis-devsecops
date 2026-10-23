@@ -70,6 +70,19 @@ kubectl -n <ns> get events --field-selector reason=Quarantined
 3. Find the entry point (application logs in the evidence, ZAP and SAST
    findings), fix it and ship the fix through the pipeline.
 
+## Roll out a new response rule
+
+1. Add the rule to `deploy/response/base/playbook.json` with
+   `"mode": "notify"` and ship it through the pipeline.
+2. Watch `AegisWouldHaveContained` and the `WouldQuarantine` Events:
+   `kubectl get events -A --field-selector reason=WouldQuarantine`.
+3. If it only fired on real attacks (or on the drill), change the mode to
+   `enforce`. If it fired on legitimate behaviour, narrow its match first.
+
+To dry-run the whole responder, for example on a new cluster, set
+`RESPONDER_MODE=notify` on the Deployment: every rule then reports without
+acting.
+
 ## The responder could not contain a threat
 
 Alert `AegisContainmentFailed` (or `AegisResponseActionErrors`): the attacker

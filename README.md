@@ -142,6 +142,27 @@ admission like the workload, and the admission drill proves no other pod can
 borrow its API identity. Reconnaissance (`whoami`, `wget`) is recorded, not
 contained, so noise never kills healthy pods.
 
+### False positives: enforce only what has earned it
+
+Auto-remediation is only as good as its rules, so the responder never trusts a
+rule by default:
+
+- **A false positive does not become an outage.** Quarantine hits one pod;
+  the Deployment has already started a clean replacement that takes the
+  traffic. The drill checks on every release that the replacement is Ready
+  and serving.
+- **Containment is reserved for high-confidence signals.** The workload is
+  distroless, so a shell or a token read inside it is never legitimate.
+  Noisier signals are `record`-only.
+- **Notify-only mode.** Any rule can run with `"mode": "notify"`: it raises a
+  `WouldQuarantine` Event and the `AegisWouldHaveContained` warning, and
+  touches nothing. New rules start there and are promoted to `enforce` once
+  they have only fired on real attacks. The broad `contain-critical`
+  catch-all ships in notify mode for exactly that reason.
+- **One switch for a new cluster.** `RESPONDER_MODE=notify` turns every rule
+  into a dry run, so the responder can be rolled out next to production
+  workloads and observed before it is allowed to act.
+
 The runtime drill ([`scripts/attack-runtime.sh`](scripts/attack-runtime.sh))
 proves the whole loop on every release: detect, contain, recover, preserve,
 clean up and alert.
