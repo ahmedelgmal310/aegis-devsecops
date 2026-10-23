@@ -152,7 +152,7 @@ func TestIntakeRequiresFalcoClientCertificate(t *testing.T) {
 	done := make(chan struct{})
 	go func() { in.Work(ctx); close(done) }()
 	deadline := time.Now().Add(2 * time.Second)
-	for len(kube.events) == 0 && time.Now().Before(deadline) {
+	for kube.eventCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	cancel()

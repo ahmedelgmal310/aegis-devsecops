@@ -41,6 +41,12 @@ type fakeCluster struct {
 	podsInLabel map[string][]Pod
 }
 
+func (f *fakeCluster) eventCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.events)
+}
+
 func newFakeCluster() *fakeCluster {
 	return &fakeCluster{
 		pods:        map[string]*Pod{},
@@ -64,6 +70,8 @@ func (f *fakeCluster) GetPod(_ context.Context, ns, name string) (*Pod, error) {
 }
 
 func (f *fakeCluster) ListPods(_ context.Context, ns, _ string) ([]Pod, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.failList != nil {
 		return nil, f.failList
 	}
@@ -84,6 +92,8 @@ func (f *fakeCluster) PatchPod(_ context.Context, _, _ string, patch any) error 
 }
 
 func (f *fakeCluster) DeletePod(_ context.Context, ns, name, uid string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.failDelete != nil {
 		return f.failDelete
 	}
@@ -92,6 +102,8 @@ func (f *fakeCluster) DeletePod(_ context.Context, ns, name, uid string) error {
 }
 
 func (f *fakeCluster) PodLogs(_ context.Context, _, _, container string, _ int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.failLogs != nil {
 		return "", f.failLogs
 	}
@@ -99,6 +111,8 @@ func (f *fakeCluster) PodLogs(_ context.Context, _, _, container string, _ int) 
 }
 
 func (f *fakeCluster) ReplicaSetSelector(_ context.Context, ns, name string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.failRSRead != nil {
 		return nil, f.failRSRead
 	}
@@ -106,6 +120,8 @@ func (f *fakeCluster) ReplicaSetSelector(_ context.Context, ns, name string) (ma
 }
 
 func (f *fakeCluster) CreateConfigMap(_ context.Context, cm *ConfigMap) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.failConfig != nil {
 		return f.failConfig
 	}
@@ -114,6 +130,8 @@ func (f *fakeCluster) CreateConfigMap(_ context.Context, cm *ConfigMap) error {
 }
 
 func (f *fakeCluster) CreateEvent(_ context.Context, ev *KubeEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.failEvent != nil {
 		return f.failEvent
 	}
