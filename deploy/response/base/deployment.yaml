@@ -36,6 +36,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        # Makes the mounted TLS key (mode 0440) readable by the non-root user.
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:

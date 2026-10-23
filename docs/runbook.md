@@ -45,14 +45,54 @@ not signed by the pipeline on `main`, it is referenced by tag instead of
 digest, or the manifest weakened a security setting. Fix the source, never the
 policy.
 
-## Falco raised an alert
+## A pod was contained by the incident responder
 
-1. Identify the pod from the alert fields (`k8s.pod.name`, `k8s.ns.name`).
-2. Isolate it: `kubectl -n <ns> label pod <pod> quarantine=true` and apply a
-   deny-all NetworkPolicy selecting `quarantine=true`.
-3. Preserve evidence before deleting: `kubectl -n <ns> logs <pod> > evidence.log`.
-4. Delete the pod; the Deployment recreates it from the signed image.
-5. Find the entry point (application logs, ZAP and SAST findings) and fix it.
+Containment is automatic (alert `AegisRuntimeThreatContained`). The isolated
+pod keeps running, without any network, for the forensic hold (5 minutes in
+prod) so it can be inspected live, then the responder deletes it.
+
+```bash
+# What happened, and when
+kubectl -n aegis-response get configmaps -l aegis.dev/incident
+kubectl -n aegis-response get configmap incident-<id> -o jsonpath='{.data.incident\.json}'
+kubectl -n aegis-response get configmap incident-<id> -o jsonpath='{.data.falco-alert\.json}'
+
+# The quarantined pod (while the hold lasts) and the audit trail
+kubectl get pods -A -l aegis.dev/quarantine=true
+kubectl -n <ns> get events --field-selector reason=Quarantined
+```
+
+1. Read `incident.json` (rule, playbook decision, detection and containment
+   times, node, images) and the alert.
+2. During the hold, inspect the pod (`kubectl exec` still works; the network
+   does not). Extend the hold by editing the `aegis.dev/terminate-after`
+   annotation if you need more time.
+3. Find the entry point (application logs in the evidence, ZAP and SAST
+   findings), fix it and ship the fix through the pipeline.
+
+## The responder could not contain a threat
+
+Alert `AegisContainmentFailed` (or `AegisResponseActionErrors`): the attacker
+may still have network access.
+
+```bash
+kubectl -n aegis-response logs deploy/aegis-responder --tail=100
+kubectl auth can-i patch pods -n <ns> --as=system:serviceaccount:aegis-response:aegis-responder
+```
+
+Contain manually with the same mechanism the responder uses:
+`kubectl -n <ns> label pod <pod> aegis.dev/quarantine=true` (the
+`aegis-quarantine` NetworkPolicy isolates it), then remove the selector labels
+so the Deployment replaces it. A namespace the responder should protect needs
+the `aegis-quarantine` NetworkPolicy, the `aegis-responder` Role and an entry
+in `deploy/response/base/playbook.json`.
+
+## Falco alerts are dropped as unauthenticated
+
+Alert `AegisAlertsDropped{reason="unauthenticated"}` means something other
+than Falco is calling the responder, or Falco's client certificate no longer
+matches the responder's CA. Re-run `scripts/cluster-up.sh` to reissue both
+from the same CA, then restart the responder and Falco.
 
 ## Roll back a release
 

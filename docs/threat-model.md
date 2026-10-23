@@ -30,10 +30,14 @@ flowchart LR
     kyv -->|verify| sig
     api --> pod[Ledger pod]
     falco[Falco eBPF] -.watches.-> pod
+    falco -->|alerts, mTLS| resp[aegis-responder]
+    resp -->|quarantine, evict| api
+    resp -->|evidence| ev[(Immutable ConfigMaps)]
 ```
 
 Boundaries: developer ↔ GitHub, GitHub ↔ runner, runner ↔ registry,
-registry ↔ cluster, cluster API ↔ workload, workload ↔ network.
+registry ↔ cluster, cluster API ↔ workload, workload ↔ network,
+Falco ↔ responder (mutual TLS), responder ↔ cluster API (namespaced RBAC).
 
 ## Threats and controls (STRIDE)
 
@@ -57,6 +61,10 @@ registry ↔ cluster, cluster API ↔ workload, workload ↔ network.
 | T16 | Web misconfiguration (headers, CSP, clickjacking) | Tampering | Strict security headers, verified by OWASP ZAP on every release | `scripts/dast.sh` |
 | T17 | Compromised pipeline (poisoned action, over-privileged token) | Tampering / Elevation | Actions pinned to commit SHAs, tool images pinned by digest, least-privilege `GITHUB_TOKEN` per job, actionlint, OpenSSF Scorecard, CODEOWNERS | `.github/` |
 | T18 | Long-lived cloud credentials leaked | Spoofing | GitHub OIDC federation to AWS scoped to this repo and branch | `infra/terraform/aws/github-oidc.tf` |
+| T19 | Attacker keeps working after being detected | Elevation / Information disclosure | Automated containment: the responder isolates the pod with a NetworkPolicy and detaches it from its controller within seconds; a clean replacement takes the traffic | `app/internal/responder`, `deploy/response` |
+| T20 | Evidence destroyed when the pod is deleted | Repudiation | Alert, pod object and logs written to an immutable ConfigMap before termination; the responder can create but not read, edit or delete evidence | `responder.go`, `deploy/response/base/rbac.yaml` |
+| T21 | Forged alerts used to make the responder kill healthy pods | Spoofing / Denial of service | Mutual TLS (only Falco's client certificate is accepted), ingress NetworkPolicy from the `falco` namespace only, namespace allowlist, container-ID check, rate limit and bounded queue | `server.go`, `deploy/response/base/networkpolicy.yaml` |
+| T22 | Compromised responder abused against the cluster | Elevation | Namespaced Roles only (no ClusterRole, no Secrets, no exec), signed image verified at admission, restricted PSA, only egress is the API server; the API-token exception is tied to its service account and proven not borrowable | `rbac.yaml`, `require-workload-hardening.yaml`, `attack-admission.sh` |
 
 ## OWASP Top 10 CI/CD Security Risks
 
@@ -71,7 +79,7 @@ registry ↔ cluster, cluster API ↔ workload, workload ↔ network.
 | CICD-SEC-7 Insecure system configuration | Checkov on workflows, actionlint, Scorecard |
 | CICD-SEC-8 Ungoverned 3rd-party services | Actions pinned by SHA, tool images pinned by digest, manifests checksum-verified |
 | CICD-SEC-9 Improper artifact integrity validation | cosign signatures and attestations, verified again at admission |
-| CICD-SEC-10 Insufficient logging and visibility | SARIF in GitHub code scanning, job summaries, Falco alerts, Kyverno policy reports |
+| CICD-SEC-10 Insufficient logging and visibility | SARIF in GitHub code scanning, job summaries, Falco alerts, Kyverno policy reports, Prometheus alerts for every contained incident |
 
 ## Residual risks
 
@@ -81,3 +89,10 @@ registry ↔ cluster, cluster API ↔ workload, workload ↔ network.
   kernel lockdown) is out of scope.
 - The Terraform module is validated and scanned in CI but is not applied,
   so no AWS account is required to run the project.
+- The responder runs as a single replica; if it is down, threats are still
+  detected and alerted on (`AegisResponderDown`) but not contained until it
+  is back. The mTLS certificates are issued per cluster by a script; a
+  production setup would use cert-manager with rotation.
+- Containment relies on NetworkPolicy enforcement by the CNI. The drill proves
+  it on every release by checking that the quarantined pod really loses its
+  network.
