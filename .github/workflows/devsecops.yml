@@ -18,6 +18,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/ahmedelgmal310/aegis-ledger
+  RESPONDER_IMAGE: ghcr.io/ahmedelgmal310/aegis-responder
   GO_VERSION: "1.27.3"
   # Security tool images, pinned by digest.
   GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
@@ -31,6 +32,7 @@ env:
   FALCO_IMAGE: falcosecurity/falco:0.45.1@sha256:69e957f91b3a6beb5c82e2afae33ec3e4479dab2d4421475d288d0cd113cedf6
   GOLANGCI_LINT_IMAGE: golangci/golangci-lint:v2.15.0@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d46863148c73cb88e7793af96c481
   TERRAFORM_IMAGE: hashicorp/terraform:1.17.0@sha256:4d1b496a256f2989bccdb04b9104a4ede97234b10fba90259e173e905ec4fb58
+  PROMETHEUS_IMAGE: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
 
 jobs:
   # ---------------------------------------------------------------- stage 1
@@ -145,6 +147,8 @@ jobs:
           mkdir -p rendered
           kubectl kustomize deploy/k8s/overlays/prod > rendered/prod.yaml
           kubectl kustomize deploy/k8s/overlays/ci > rendered/ci.yaml
+          kubectl kustomize deploy/response/overlays/prod > rendered/response-prod.yaml
+          kubectl kustomize deploy/response/overlays/ci > rendered/response-ci.yaml
       - name: Checkov (Kubernetes, Dockerfile, Terraform, GitHub Actions)
         id: checkov
         run: |
@@ -187,6 +191,12 @@ jobs:
         run: |
           docker run --rm -v "$PWD/deploy/falco:/rules:ro" --entrypoint falco "$FALCO_IMAGE" \
             -V /etc/falco/falco_rules.yaml -V /rules/aegis-rules.yaml
+      - name: Prometheus alerting rules unit tests
+        run: |
+          docker run --rm -v "$PWD/deploy/monitoring:/rules:ro" -w /rules --entrypoint promtool "$PROMETHEUS_IMAGE" \
+            check rules aegis-rules.yaml
+          docker run --rm -v "$PWD/deploy/monitoring:/rules:ro" -w /rules --entrypoint promtool "$PROMETHEUS_IMAGE" \
+            test rules aegis-rules.test.yaml
 
   test:
     name: Unit tests & coverage gate
@@ -231,6 +241,7 @@ jobs:
       security-events: write
     outputs:
       image: ${{ steps.ref.outputs.image }}
+      responder: ${{ steps.ref.outputs.responder }}
       unsigned: ${{ steps.decoy.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -247,23 +258,24 @@ jobs:
 
       - name: Build (pull request, not pushed)
         if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: app
-          load: true
-          tags: aegis-ledger:pr
-          build-args: |
-            VERSION=pr-${{ github.event.number }}
-            COMMIT=${{ github.sha }}
-          cache-from: type=gha
-      - name: Scan PR image (Trivy)
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          for component in ledger responder; do
+            docker buildx build --load \
+              --build-arg COMPONENT="$component" --build-arg VERSION="pr-${PR_NUMBER}" \
+              --build-arg COMMIT="$GITHUB_SHA" -t "aegis-${component}:pr" app
+          done
+      - name: Scan PR images (Trivy)
         if: github.event_name == 'pull_request'
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --quiet \
-            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 aegis-ledger:pr
+          for component in ledger responder; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --quiet \
+              --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "aegis-${component}:pr"
+          done
 
-      - name: Build and push (linux/amd64, linux/arm64)
-        id: push
+      - name: Build and push ledger (linux/amd64, linux/arm64)
+        id: ledger
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -276,87 +288,58 @@ jobs:
             ${{ env.IMAGE }}:main
             ${{ env.IMAGE }}:sha-${{ github.sha }}
           build-args: |
+            COMPONENT=ledger
             VERSION=1.0.${{ github.run_number }}
             COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Image reference
+      - name: Build and push responder (linux/amd64, linux/arm64)
+        id: responder
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ env.RESPONDER_IMAGE }}:main
+            ${{ env.RESPONDER_IMAGE }}:sha-${{ github.sha }}
+          build-args: |
+            COMPONENT=responder
+            PORTS=8443 9090
+            VERSION=1.0.${{ github.run_number }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Image references
         id: ref
         if: github.event_name != 'pull_request'
-        run: echo "image=${IMAGE}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
-
-      - name: Trivy image scan (gate on fixable HIGH/CRITICAL)
-        id: trivy_image
-        if: github.event_name != 'pull_request'
-        env:
-          TRIVY_USERNAME: ${{ github.actor }}
-          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-          REF: ${{ steps.ref.outputs.image }}
         run: |
-          mkdir -p out
-          docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD -v "$PWD/out:/out" "$TRIVY_IMAGE" image --quiet \
-            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$REF"
-          docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD -v "$PWD/out:/out" "$TRIVY_IMAGE" image --quiet \
-            --format sarif --output /out/trivy-image.sarif "$REF"
-          docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD -v "$PWD/out:/out" "$TRIVY_IMAGE" image --quiet \
-            --format cosign-vuln --output /out/vuln.json "$REF"
-      - name: Generate SBOM (Syft, SPDX)
-        if: github.event_name != 'pull_request'
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          image: ${{ steps.ref.outputs.image }}
-          format: spdx-json
-          output-file: out/sbom.spdx.json
-          upload-artifact: false
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          echo "image=${IMAGE}@${{ steps.ledger.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "responder=${RESPONDER_IMAGE}@${{ steps.responder.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: github.event_name != 'pull_request'
         with:
           cosign-release: v3.1.4
-      - name: Sign image and attach attestations (Sigstore keyless)
+      - name: Scan, SBOM, sign, attest and verify the ledger
         if: github.event_name != 'pull_request'
-        env:
-          REF: ${{ steps.ref.outputs.image }}
-        run: |
-          cosign sign --yes "$REF"
-          cosign attest --yes --type spdxjson --predicate out/sbom.spdx.json "$REF"
-          cosign attest --yes --type vuln --predicate out/vuln.json "$REF"
-      - name: SLSA build provenance
-        if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        uses: ./.github/actions/release-image
         with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: false
-      - name: Verify what we just published
+          image: ${{ env.IMAGE }}
+          digest: ${{ steps.ledger.outputs.digest }}
+          name: ledger
+          registry-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan, SBOM, sign, attest and verify the responder
         if: github.event_name != 'pull_request'
-        env:
-          REF: ${{ steps.ref.outputs.image }}
-        run: |
-          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/devsecops.yml@${GITHUB_REF}"
-          cosign verify "$REF" --certificate-identity "$identity" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
-          cosign verify-attestation "$REF" --type spdxjson --certificate-identity "$identity" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
-          cosign verify-attestation "$REF" --type vuln --certificate-identity "$identity" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
-          packages=$(jq '.packages | length' out/sbom.spdx.json)
-          critical=$(jq '[.scanner.result.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' out/vuln.json)
-          high=$(jq '[.scanner.result.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' out/vuln.json)
-          {
-            echo "### Release artifact"
-            echo ""
-            echo "| | |"
-            echo "|---|---|"
-            echo "| Image | \`${REF}\` |"
-            echo "| Platforms | linux/amd64, linux/arm64 |"
-            echo "| Signature | Sigstore keyless, verified, logged in Rekor |"
-            echo "| SBOM | SPDX, ${packages} packages, signed attestation |"
-            echo "| Vulnerabilities | ${critical} critical, ${high} high (signed attestation) |"
-            echo "| Provenance | SLSA build provenance (GitHub attestation) |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        uses: ./.github/actions/release-image
+        with:
+          image: ${{ env.RESPONDER_IMAGE }}
+          digest: ${{ steps.responder.outputs.digest }}
+          name: responder
+          registry-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Unsigned decoy for the admission test
         id: decoy
         if: github.event_name != 'pull_request'
@@ -366,22 +349,17 @@ jobs:
             -t "${IMAGE}:e2e-unsigned" app
           digest=$(docker buildx imagetools inspect "${IMAGE}:e2e-unsigned" --format '{{json .Manifest.Digest}}' | tr -d '"')
           echo "image=${IMAGE}@${digest}" >> "$GITHUB_OUTPUT"
-      - name: Upload SARIF
-        if: always() && steps.trivy_image.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with:
-          sarif_file: out/trivy-image.sarif
-          category: trivy-image
-      - name: Upload SBOM and scan results
-        if: always() && steps.trivy_image.outcome != 'skipped'
+      - name: Upload SBOMs and scan results
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: supply-chain-artifacts
           path: out/
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------- stage 3
   e2e:
-    name: E2E on Kubernetes (GitOps, admission, runtime, DAST)
+    name: E2E on Kubernetes (GitOps, admission, runtime response, DAST)
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
@@ -397,7 +375,7 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.1
-      - name: Platform up (Sealed Secrets, Kyverno, Falco, Argo CD)
+      - name: Platform up (Sealed Secrets, Kyverno, Falco, Prometheus, Argo CD)
         env:
           SEALED_SECRETS_KEY: ${{ secrets.SEALED_SECRETS_KEY }}
         run: |
@@ -405,10 +383,16 @@ jobs:
           printf '%s\n' "$SEALED_SECRETS_KEY" > "$SEALED_SECRETS_KEY_FILE"
           ./scripts/cluster-up.sh
           rm -f "$SEALED_SECRETS_KEY_FILE"
-      - name: GitOps deploy through Argo CD
+      - name: GitOps deploy through Argo CD (ledger)
         env:
           OVERLAY: deploy/k8s/overlays/ci
         run: ./scripts/deploy.sh "${{ github.sha }}" "${{ needs.build.outputs.image }}"
+      - name: GitOps deploy through Argo CD (incident responder)
+        env:
+          APP: responder
+          OVERLAY: deploy/response/overlays/ci
+          NAMESPACE: aegis-response
+        run: ./scripts/deploy.sh "${{ github.sha }}" "${{ needs.build.outputs.responder }}"
       - name: Smoke test
         run: ./scripts/smoke-test.sh
       - name: Attack simulation - admission control
@@ -416,7 +400,7 @@ jobs:
           SIGNED_IMAGE: ${{ needs.build.outputs.image }}
           UNSIGNED_IMAGE: ${{ needs.build.outputs.unsigned }}
         run: ./scripts/attack-admission.sh
-      - name: Attack simulation - runtime detection
+      - name: Attack simulation - runtime detection and automated response
         run: ./scripts/attack-runtime.sh
       - name: DAST - OWASP ZAP baseline
         run: ./scripts/dast.sh
@@ -427,6 +411,8 @@ jobs:
           kubectl -n argocd get applications -o yaml || true
           kubectl -n aegis get events --sort-by=.lastTimestamp || true
           kubectl -n kyverno logs -l app.kubernetes.io/component=admission-controller --tail=100 || true
+          kubectl -n aegis-response logs deploy/aegis-responder --tail=100 || true
+          kubectl -n falco logs -l app.kubernetes.io/name=falco -c falco --tail=50 || true
       - name: Upload security reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -447,13 +433,16 @@ jobs:
       - name: Pin the verified digest in the prod overlay
         env:
           REF: ${{ needs.build.outputs.image }}
+          RESPONDER_REF: ${{ needs.build.outputs.responder }}
         run: |
           digest="${REF##*@}"
+          rdigest="${RESPONDER_REF##*@}"
           sed -i -E "s|digest: sha256:[0-9a-f]{64}|digest: ${digest}|" deploy/k8s/overlays/prod/kustomization.yaml
+          sed -i -E "s|digest: sha256:[0-9a-f]{64}|digest: ${rdigest}|" deploy/response/overlays/prod/kustomization.yaml
           if git diff --quiet; then echo "already promoted"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "deploy(prod): promote aegis-ledger@${digest:0:19}"
+          git commit -am "deploy(prod): promote aegis-ledger@${digest:0:19}, aegis-responder@${rdigest:0:19}"
           git pull --rebase --autostash origin main
           git push origin HEAD:main
-          echo "### Promoted \`${digest}\` to prod; Argo CD will roll it out." >> "$GITHUB_STEP_SUMMARY"
+          echo "### Promoted \`${digest}\` (ledger) and \`${rdigest}\` (responder) to prod; Argo CD will roll them out." >> "$GITHUB_STEP_SUMMARY"

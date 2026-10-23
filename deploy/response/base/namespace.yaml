@@ -1,0 +1,13 @@
+# The incident responder runs in its own namespace, under the same
+# restricted Pod Security profile and Kyverno policies as the workload: its
+# image must be signed by this pipeline like any other.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aegis-response
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    aegis.dev/policy: enforced

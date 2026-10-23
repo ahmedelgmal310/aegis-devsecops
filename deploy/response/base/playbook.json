@@ -1,0 +1,27 @@
+{
+  "namespaces": ["aegis", "aegis-drill"],
+  "evidenceNamespace": "aegis-response",
+  "quarantineHoldSeconds": 300,
+  "rules": [
+    {
+      "name": "contain-credential-access",
+      "match": {"rules": ["Aegis Credential File Read"]},
+      "actions": ["quarantine", "evidence", "terminate"]
+    },
+    {
+      "name": "contain-interactive-shell",
+      "match": {"rules": ["Aegis Shell Spawned in Workload"]},
+      "actions": ["quarantine", "evidence", "terminate"]
+    },
+    {
+      "name": "contain-critical",
+      "match": {"minPriority": "Critical", "tags": ["container"]},
+      "actions": ["quarantine", "evidence", "terminate"]
+    },
+    {
+      "name": "record-discovery",
+      "match": {"rules": ["Aegis Discovery Tool Executed"]},
+      "actions": ["record"]
+    }
+  ]
+}

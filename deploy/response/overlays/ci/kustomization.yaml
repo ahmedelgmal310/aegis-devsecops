@@ -1,0 +1,20 @@
+# Ephemeral end-to-end overlay. The pipeline overrides the image with the
+# freshly signed digest and shortens the forensic hold so the drill can watch
+# the quarantined pod being terminated.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/ahmedelgmal310/aegis-responder
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+patches:
+  - target:
+      kind: Deployment
+      name: aegis-responder
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: RESPONDER_HOLD_SECONDS
+          value: "45"

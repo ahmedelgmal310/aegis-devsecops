@@ -10,23 +10,26 @@ help: ## Show available targets
 test: ## Run unit tests with the race detector and coverage
 	cd app && go test -race -cover ./...
 
-lint: ## Lint Go code and policies locally
+lint: ## Lint Go code, policies and alerting rules locally
 	cd app && golangci-lint run ./...
 	docker run --rm -v "$$PWD:/repo" -w /repo ghcr.io/kyverno/kyverno-cli:v1.19.2 test deploy/policies/tests
+	docker run --rm -v "$$PWD/deploy/monitoring:/rules" -w /rules --entrypoint promtool prom/prometheus:v3.15.0 test rules aegis-rules.test.yaml
 
-image: ## Build the ledger image locally
+image: ## Build the ledger and responder images locally
 	docker build -t aegis-ledger:dev app
+	docker build --build-arg COMPONENT=responder --build-arg PORTS="8443 9090" -t aegis-responder:dev app
 
-up: ## Create the kind cluster with Kyverno, Falco, Argo CD and Sealed Secrets
+up: ## Create the kind cluster with Kyverno, Falco, Prometheus, Argo CD and Sealed Secrets
 	./scripts/cluster-up.sh
 
-deploy: ## Deploy the promoted release from main through Argo CD
+deploy: ## Deploy the promoted ledger and incident responder from main through Argo CD
 	./scripts/deploy.sh
+	APP=responder OVERLAY=deploy/response/overlays/prod NAMESPACE=aegis-response ./scripts/deploy.sh
 
 smoke: ## Functional smoke test against the cluster
 	./scripts/smoke-test.sh
 
-attack: ## Run the admission and runtime attack simulations
+attack: ## Run the admission and runtime attack simulations (detection and automated response)
 	SIGNED_IMAGE="$$(kubectl -n aegis get deploy ledger -o jsonpath='{.spec.template.spec.containers[0].image}')" ./scripts/attack-admission.sh
 	./scripts/attack-runtime.sh
 

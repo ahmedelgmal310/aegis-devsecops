@@ -1,0 +1,98 @@
+name: Release image
+description: >-
+  Gates a pushed image on Trivy, then attaches everything the cluster checks
+  at admission: a keyless cosign signature, a signed SPDX SBOM, a signed
+  vulnerability report and SLSA build provenance. Finally verifies all of it.
+
+inputs:
+  image:
+    description: Image repository, e.g. ghcr.io/owner/aegis-ledger
+    required: true
+  digest:
+    description: Digest of the pushed multi-arch image
+    required: true
+  name:
+    description: Short component name used for reports and artifacts
+    required: true
+  registry-token:
+    description: Token with read access to the registry
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Trivy image scan (gate on fixable HIGH/CRITICAL)
+      id: trivy
+      shell: bash
+      env:
+        TRIVY_USERNAME: ${{ github.actor }}
+        TRIVY_PASSWORD: ${{ inputs.registry-token }}
+        REF: ${{ inputs.image }}@${{ inputs.digest }}
+        OUT: out/${{ inputs.name }}
+      run: |
+        mkdir -p "$OUT"
+        docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD -v "$PWD/$OUT:/out" "$TRIVY_IMAGE" image --quiet \
+          --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$REF"
+        docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD -v "$PWD/$OUT:/out" "$TRIVY_IMAGE" image --quiet \
+          --format sarif --output /out/trivy-image.sarif "$REF"
+        docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD -v "$PWD/$OUT:/out" "$TRIVY_IMAGE" image --quiet \
+          --format cosign-vuln --output /out/vuln.json "$REF"
+    - name: Generate SBOM (Syft, SPDX)
+      uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      with:
+        image: ${{ inputs.image }}@${{ inputs.digest }}
+        format: spdx-json
+        output-file: out/${{ inputs.name }}/sbom.spdx.json
+        upload-artifact: false
+        registry-username: ${{ github.actor }}
+        registry-password: ${{ inputs.registry-token }}
+    - name: Sign image and attach attestations (Sigstore keyless)
+      shell: bash
+      env:
+        REF: ${{ inputs.image }}@${{ inputs.digest }}
+        OUT: out/${{ inputs.name }}
+      run: |
+        cosign sign --yes "$REF"
+        cosign attest --yes --type spdxjson --predicate "$OUT/sbom.spdx.json" "$REF"
+        cosign attest --yes --type vuln --predicate "$OUT/vuln.json" "$REF"
+    - name: SLSA build provenance
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ inputs.digest }}
+        push-to-registry: false
+    - name: Verify what we just published
+      shell: bash
+      env:
+        REF: ${{ inputs.image }}@${{ inputs.digest }}
+        OUT: out/${{ inputs.name }}
+        NAME: ${{ inputs.name }}
+      run: |
+        identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/devsecops.yml@${GITHUB_REF}"
+        cosign verify "$REF" --certificate-identity "$identity" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+        cosign verify-attestation "$REF" --type spdxjson --certificate-identity "$identity" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+        cosign verify-attestation "$REF" --type vuln --certificate-identity "$identity" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+        packages=$(jq '.packages | length' "$OUT/sbom.spdx.json")
+        critical=$(jq '[.scanner.result.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$OUT/vuln.json")
+        high=$(jq '[.scanner.result.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "$OUT/vuln.json")
+        {
+          echo "### Release artifact: ${NAME}"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Image | \`${REF}\` |"
+          echo "| Platforms | linux/amd64, linux/arm64 |"
+          echo "| Signature | Sigstore keyless, verified, logged in Rekor |"
+          echo "| SBOM | SPDX, ${packages} packages, signed attestation |"
+          echo "| Vulnerabilities | ${critical} critical, ${high} high (signed attestation) |"
+          echo "| Provenance | SLSA build provenance (GitHub attestation) |"
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: Upload SARIF
+      if: always() && steps.trivy.outcome == 'success'
+      uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      with:
+        sarif_file: out/${{ inputs.name }}/trivy-image.sarif
+        category: trivy-image-${{ inputs.name }}

@@ -1,4 +1,5 @@
-# Admission-time supply-chain gate. A ledger image is admitted only if it is
+# Admission-time supply-chain gate. An Aegis image (the ledger or the incident
+# responder) is admitted only if it is
 # pinned by digest, signed by this repository's pipeline on main (Sigstore
 # keyless, recorded in Rekor), carries a signed SPDX SBOM, and carries a
 # signed vulnerability scan that reports no CRITICAL findings.
@@ -32,7 +33,7 @@ spec:
         operations: [CREATE, UPDATE]
         resources: [pods]
   matchImageReferences:
-    - glob: ghcr.io/ahmedelgmal310/aegis-ledger*
+    - glob: ghcr.io/ahmedelgmal310/aegis-*
   validationConfigurations:
     mutateDigest: false
     verifyDigest: true

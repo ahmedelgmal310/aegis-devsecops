@@ -1,0 +1,28 @@
+# Helm values for the prometheus-community/prometheus chart. Only the server
+# is installed; it discovers the ledger and the responder through their
+# prometheus.io/* pod annotations. The alerting rules in aegis-rules.yaml are
+# added by scripts/cluster-up.sh and unit-tested with promtool in CI.
+alertmanager:
+  enabled: false
+kube-state-metrics:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+prometheus-pushgateway:
+  enabled: false
+
+server:
+  global:
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    evaluation_interval: 15s
+  retention: 1d
+  persistentVolume:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

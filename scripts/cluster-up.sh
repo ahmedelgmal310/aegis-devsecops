@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Creates a kind cluster with the full Aegis security stack:
-# Sealed Secrets, Kyverno + policies, Falco and Argo CD.
+# Sealed Secrets, Kyverno + policies, Falco (wired to the incident responder
+# over mutual TLS), Prometheus and Argo CD.
 source "$(dirname "$0")/lib.sh"
-require kind kubectl helm curl sha256sum
+require kind kubectl helm curl sha256sum openssl
 
 CLUSTER_NAME="${CLUSTER_NAME:-aegis}"
 INSTALL_FALCO="${INSTALL_FALCO:-true}"
@@ -52,6 +53,44 @@ for p in $(kubectl get validatingpolicies.policies.kyverno.io -o name) $(kubectl
   ok "policy ready: ${p#*/}"
 done
 
+step "Mutual TLS between Falco and the incident responder"
+# A throwaway CA per cluster: the responder only accepts alerts from a client
+# certificate it signed (CN=falco), and Falco only sends alerts to a server
+# presenting a certificate it signed. In production cert-manager would issue
+# and rotate these; nothing here is ever committed.
+if kubectl -n aegis-response get secret aegis-responder-tls >/dev/null 2>&1 \
+   && kubectl -n falco get secret falco-responder-client >/dev/null 2>&1; then
+  ok "certificates already issued"
+else
+  pki="$tmp/pki"; mkdir -p "$pki"
+  svc=aegis-responder.aegis-response.svc
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 \
+    -subj "/CN=aegis-response-ca" -keyout "$pki/ca.key" -out "$pki/ca.crt" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+  issue() { # issue NAME CN EXTENSIONS
+    openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=$2" \
+      -keyout "$pki/$1.key" -out "$pki/$1.csr" 2>/dev/null
+    printf '%s\n' "$3" > "$pki/$1.ext"
+    openssl x509 -req -in "$pki/$1.csr" -CA "$pki/ca.crt" -CAkey "$pki/ca.key" -CAcreateserial \
+      -days 30 -extfile "$pki/$1.ext" -out "$pki/$1.crt" 2>/dev/null
+  }
+  issue server aegis-responder "subjectAltName=DNS:$svc,DNS:$svc.cluster.local
+extendedKeyUsage=serverAuth
+keyUsage=critical,digitalSignature"
+  issue client falco "extendedKeyUsage=clientAuth
+keyUsage=critical,digitalSignature"
+  for ns in aegis-response falco; do
+    kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  done
+  kubectl -n aegis-response create secret generic aegis-responder-tls \
+    --from-file=tls.crt="$pki/server.crt" --from-file=tls.key="$pki/server.key" --from-file=ca.crt="$pki/ca.crt" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n falco create secret generic falco-responder-client \
+    --from-file=client.crt="$pki/client.crt" --from-file=client.key="$pki/client.key" --from-file=ca.crt="$pki/ca.crt" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  ok "CA, responder server certificate and Falco client certificate issued (P-256, 30 days)"
+fi
+
 if [[ "$INSTALL_FALCO" == "true" ]]; then
   step "Falco (chart $FALCO_CHART_VERSION) with Aegis runtime rules"
   helm repo add falcosecurity https://falcosecurity.github.io/charts --force-update >/dev/null
@@ -61,6 +100,18 @@ if [[ "$INSTALL_FALCO" == "true" ]]; then
     --wait --timeout 10m >/dev/null
   ok "falco running with $(grep -c '^- rule:' "$ROOT_DIR/deploy/falco/aegis-rules.yaml") custom rules"
 fi
+
+step "Prometheus (chart $PROMETHEUS_CHART_VERSION) with Aegis alerting rules"
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
+{
+  echo "serverFiles:"
+  echo "  alerting_rules.yml:"
+  sed 's/^/    /' "$ROOT_DIR/deploy/monitoring/aegis-rules.yaml"
+} > "$tmp/prometheus-rules.yaml"
+helm upgrade --install prometheus prometheus-community/prometheus --namespace monitoring --create-namespace \
+  --version "$PROMETHEUS_CHART_VERSION" -f "$ROOT_DIR/deploy/monitoring/values.yaml" -f "$tmp/prometheus-rules.yaml" \
+  --wait --timeout 10m >/dev/null
+ok "prometheus running with $(grep -c '^      - alert:' "$ROOT_DIR/deploy/monitoring/aegis-rules.yaml") Aegis alerting rules"
 
 step "Argo CD $ARGOCD_VERSION"
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - >/dev/null
@@ -79,6 +130,7 @@ summary "### Platform" "" \
   "| Component | Version |" "|---|---|" \
   "| Kubernetes (kind) | ${KIND_NODE_IMAGE%@*} |" \
   "| Kyverno | chart $KYVERNO_CHART_VERSION |" \
-  "| Falco | chart $FALCO_CHART_VERSION |" \
+  "| Falco | chart $FALCO_CHART_VERSION, alerts to the responder over mTLS |" \
+  "| Prometheus | chart $PROMETHEUS_CHART_VERSION |" \
   "| Argo CD | $ARGOCD_VERSION |" \
   "| Sealed Secrets | $SEALED_SECRETS_VERSION |" ""

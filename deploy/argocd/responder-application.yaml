@@ -1,0 +1,27 @@
+# GitOps for the incident responder: same project, same rules as the ledger.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: responder
+  namespace: argocd
+spec:
+  project: aegis
+  source:
+    repoURL: https://github.com/ahmedelgmal310/aegis-devsecops.git
+    targetRevision: main
+    path: deploy/response/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aegis-response
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

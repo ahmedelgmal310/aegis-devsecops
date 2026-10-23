@@ -1,0 +1,65 @@
+# Prometheus alerting rules for the Aegis runtime defence. Unit-tested with
+# `promtool test rules deploy/monitoring/aegis-rules.test.yaml`.
+groups:
+  - name: aegis-incident-response
+    rules:
+      - alert: AegisRuntimeThreatContained
+        expr: sum by (playbook_rule) (increase(aegis_responder_events_total{decision="contained"}[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A compromised pod was isolated by the incident responder
+          description: >-
+            Playbook rule {{ $labels.playbook_rule }} contained a workload in the
+            last 5 minutes. Evidence is in the aegis-response namespace
+            (kubectl -n aegis-response get configmaps -l aegis.dev/incident).
+
+      - alert: AegisContainmentFailed
+        expr: sum(increase(aegis_responder_events_total{decision="failed"}[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: The responder could not contain a detected threat
+          description: >-
+            A Falco alert matched a containment rule but the pod could not be
+            isolated. The attacker may still have network access: investigate now.
+
+      - alert: AegisResponseActionErrors
+        expr: sum by (action) (increase(aegis_responder_actions_total{result="error"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Incident response action {{ $labels.action }} keeps failing"
+          description: Check the responder logs and its RBAC permissions.
+
+      - alert: AegisContainmentSlow
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(aegis_responder_containment_seconds_bucket[15m]))) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Containment takes longer than 5 seconds (p95)
+          description: >-
+            The time from Falco detection to pod isolation is above target
+            ({{ $value | humanizeDuration }} at p95).
+
+      - alert: AegisAlertsDropped
+        expr: sum by (reason) (increase(aegis_responder_alerts_dropped_total[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Falco alerts are being dropped ({{ $labels.reason }})"
+          description: >-
+            unauthenticated means something other than Falco is calling the
+            responder; queue_full or rate_limited means an alert storm.
+
+      - alert: AegisResponderDown
+        expr: absent(up{job="kubernetes-pods", app_kubernetes_io_name="aegis-responder"} == 1)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The incident responder is down
+          description: Runtime threats are still detected by Falco but no longer contained.

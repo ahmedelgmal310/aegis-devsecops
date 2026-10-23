@@ -10,7 +10,8 @@ metadata:
     policies.kyverno.io/description: >-
       Controls on top of the restricted Pod Security Standard: images pinned
       by digest, a read-only root filesystem, CPU and memory limits, and no
-      Kubernetes API token mounted into the pod.
+      Kubernetes API token mounted into the pod (except the incident
+      responder, which needs the API to contain compromised pods).
 spec:
   validationActions: [Deny]
   evaluation:
@@ -41,6 +42,12 @@ spec:
           has(c.resources) && has(c.resources.limits) &&
           'cpu' in c.resources.limits && 'memory' in c.resources.limits)
       message: containers must declare CPU and memory limits
+    # The incident responder is the one workload that needs the API: it
+    # isolates compromised pods. Its service account only exists in the
+    # aegis-response namespace, and the ServiceAccount admission plugin
+    # rejects pods that name an account missing from their namespace, so this
+    # exception cannot be borrowed by a workload elsewhere.
     - expression: >-
-        object.spec.?automountServiceAccountToken.orValue(true) == false
+        object.spec.?automountServiceAccountToken.orValue(true) == false ||
+        object.spec.?serviceAccountName.orValue('') == 'aegis-responder'
       message: pods must set automountServiceAccountToken to false

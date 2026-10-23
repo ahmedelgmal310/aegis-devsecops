@@ -1,0 +1,10 @@
+# Production overlay watched by Argo CD. The image digest below is written by
+# the pipeline's promote job, only after the image was built, scanned, signed,
+# attested and verified end to end.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/ahmedelgmal310/aegis-responder
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

@@ -1,0 +1,55 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: aegis-response
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# Alerts are accepted only from Falco (and authenticated again with mTLS);
+# metrics only from Prometheus. The only egress is the Kubernetes API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aegis-responder
+  namespace: aegis-response
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aegis-responder
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: falco
+      ports:
+        - port: 8443
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9090
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+---
+# A quarantined pod in the protected namespace loses all traffic. Its
+# selector labels are also removed, so no other policy allows it anything.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aegis-quarantine
+  namespace: aegis
+spec:
+  podSelector:
+    matchLabels:
+      aegis.dev/quarantine: "true"
+  policyTypes: ["Ingress", "Egress"]

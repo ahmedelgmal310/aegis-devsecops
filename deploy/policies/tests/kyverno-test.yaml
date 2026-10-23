@@ -13,7 +13,7 @@ results:
   - isValidatingPolicy: true
     policy: restrict-image-registries
     kind: Pod
-    resources: [good-pod, mutable-tag-pod, writable-rootfs-pod, no-limits-pod, api-token-pod]
+    resources: [good-pod, mutable-tag-pod, writable-rootfs-pod, no-limits-pod, api-token-pod, responder-pod, other-sa-token-pod]
     result: pass
   - isValidatingPolicy: true
     policy: restrict-image-registries
@@ -33,12 +33,12 @@ results:
   - isValidatingPolicy: true
     policy: require-workload-hardening
     kind: Pod
-    resources: [good-pod, dockerhub-pod]
+    resources: [good-pod, dockerhub-pod, responder-pod]
     result: pass
   - isValidatingPolicy: true
     policy: require-workload-hardening
     kind: Pod
-    resources: [mutable-tag-pod, writable-rootfs-pod, no-limits-pod, api-token-pod]
+    resources: [mutable-tag-pod, writable-rootfs-pod, no-limits-pod, api-token-pod, other-sa-token-pod]
     result: fail
   - isValidatingPolicy: true
     policy: require-workload-hardening

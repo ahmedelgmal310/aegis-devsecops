@@ -12,21 +12,26 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG VERSION=dev
 ARG COMMIT=unknown
+# One Dockerfile, one binary per image: ledger (the workload) or responder
+# (the incident responder). Neither image contains the other's code.
+ARG COMPONENT=ledger
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -buildvcs=false \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-      -o /out/ledger ./cmd/ledger
+      -o /out/app ./cmd/${COMPONENT}
 
 # Distroless static: no shell, no package manager, runs as UID 65532.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
 
-LABEL org.opencontainers.image.title="aegis-ledger" \
-      org.opencontainers.image.description="Demo workload for the Aegis DevSecOps platform" \
+ARG COMPONENT=ledger
+ARG PORTS=8080
+LABEL org.opencontainers.image.title="aegis-${COMPONENT}" \
+      org.opencontainers.image.description="Aegis DevSecOps platform: ${COMPONENT}" \
       org.opencontainers.image.source="https://github.com/ahmedelgmal310/aegis-devsecops" \
       org.opencontainers.image.licenses="MIT"
 
-COPY --from=build /out/ledger /ledger
+COPY --from=build /out/app /app
 USER 65532:65532
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD ["/ledger", "healthcheck"]
-ENTRYPOINT ["/ledger"]
+EXPOSE ${PORTS}
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD ["/app", "healthcheck"]
+ENTRYPOINT ["/app"]

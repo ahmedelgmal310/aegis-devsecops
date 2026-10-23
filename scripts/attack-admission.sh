@@ -20,10 +20,11 @@ printf '| Attempt | Expected | Result | Enforced by |\n|---|---|---|---|\n' > "$
 # unless one of the overrides weakens it.
 pod() {
   local name="$1" image="$2"; shift 2
-  local automount=false ro=true privileged=false nonroot=true uid=65532 resources=limits
+  local automount=false ro=true privileged=false nonroot=true uid=65532 resources=limits sa=default
   for kv in "$@"; do
     case "$kv" in
       automount=*) automount="${kv#*=}" ;;
+      sa=*) sa="${kv#*=}" ;;
       ro=*) ro="${kv#*=}" ;;
       privileged=*) privileged="${kv#*=}" ;;
       root=true) nonroot=false; uid=0 ;;
@@ -40,6 +41,7 @@ metadata:
   name: $name
   namespace: $NS
 spec:
+  serviceAccountName: $sa
   automountServiceAccountToken: $automount
   securityContext:
     runAsNonRoot: $nonroot
@@ -60,7 +62,7 @@ EOF
 reason_of() {
   # Condense an admission error to its policy name and message.
   tr '\n' ' ' <<<"$1" \
-    | grep -oE '(policy [a-z0-9-]+ error: [^;]+|violates PodSecurity "restricted:latest": [^(;]+|denied the request: [^;]{0,160})' \
+    | grep -oE '(policy [a-z0-9-]+ error: [^;]+|violates PodSecurity "restricted:latest": [^(;]+|denied the request: [^;]{0,160}|error looking up service account [^;]+)' \
     | head -1 | sed -E 's/[[:space:]]+$//'
 }
 
@@ -117,6 +119,8 @@ expect_denied "No CPU or memory limits" \
   "$(pod no-limits "$SIGNED_IMAGE" resources=none)"
 expect_denied "Kubernetes API token mounted" \
   "$(pod api-token "$SIGNED_IMAGE" automount=true)"
+expect_denied "Borrowing the incident responder's API identity" \
+  "$(pod borrowed-identity "$SIGNED_IMAGE" automount=true sa=aegis-responder)"
 
 target="$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=ledger -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 if [[ -n "$target" ]]; then

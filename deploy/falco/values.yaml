@@ -13,6 +13,17 @@ falco:
   # Evaluate every rule, so the Aegis rules still fire when a default rule
   # (e.g. "Read sensitive file untrusted") matches the same event first.
   rule_matching: all
+  http_output:
+    enabled: true
+    url: https://aegis-responder.aegis-response.svc:8443/v1/falco
+    user_agent: falco
+    mtls: true
+    client_cert: /etc/falco/certs/client/client.crt
+    client_key: /etc/falco/certs/client/client.key
+    ca_cert: /etc/falco/certs/client/ca.crt
+    ca_path: /etc/falco/certs/client/
+    insecure: false
+    keep_alive: true
 
 resources:
   requests:
@@ -21,3 +32,11 @@ resources:
   limits:
     cpu: "1"
     memory: 1Gi
+
+# Every alert is also sent to the Aegis incident responder over mutual TLS.
+# The client certificate (CN=falco), its key and the responder's CA are
+# generated per cluster by scripts/cluster-up.sh into the
+# falco-responder-client Secret; the chart mounts it at
+# /etc/falco/certs/client.
+certs:
+  existingClientSecret: falco-responder-client

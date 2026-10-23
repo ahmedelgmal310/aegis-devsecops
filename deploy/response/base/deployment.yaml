@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aegis-responder
+  namespace: aegis-response
+  labels:
+    app.kubernetes.io/name: aegis-responder
+    app.kubernetes.io/part-of: aegis
+  annotations:
+    checkov.io/skip1: CKV_K8S_38=The responder must call the Kubernetes API; its token is scoped by namespaced Roles
+spec:
+  # One replica: alerts are handled in order and deduplicated in memory.
+  # Containment is idempotent (UID preconditions, quarantine label), so a
+  # restart is safe.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aegis-responder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aegis-responder
+        app.kubernetes.io/part-of: aegis
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: aegis-responder
+      # Needed to call the Kubernetes API; scoped by the Roles in rbac.yaml.
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: responder
+          # Replaced with an immutable, signed digest by kustomize/Argo CD.
+          image: ghcr.io/ahmedelgmal310/aegis-responder:main
+          imagePullPolicy: Always
+          ports:
+            - name: alerts
+              containerPort: 8443
+              protocol: TCP
+            - name: ops
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: GOMEMLIMIT
+              value: "48MiB"
+          volumeMounts:
+            - name: playbook
+              mountPath: /etc/aegis-responder
+              readOnly: true
+            - name: tls
+              mountPath: /etc/aegis-responder/tls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: ops
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: ops
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: playbook
+          configMap:
+            name: aegis-responder-playbook
+        # Server certificate plus the CA that signs Falco's client
+        # certificate. Created per cluster by scripts/cluster-up.sh (in
+        # production: cert-manager), never committed.
+        - name: tls
+          secret:
+            secretName: aegis-responder-tls
+            defaultMode: 0440

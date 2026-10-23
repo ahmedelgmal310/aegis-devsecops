@@ -1,0 +1,68 @@
+# Least privilege: namespaced Roles only, no ClusterRole. The responder can
+# touch pods in the namespaces it protects and write evidence in its own
+# namespace, and nothing else. It cannot read Secrets, exec into pods or
+# change any controller.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aegis-responder
+  namespace: aegis-response
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aegis-responder
+  namespace: aegis
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aegis-responder
+  namespace: aegis
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aegis-responder
+subjects:
+  - kind: ServiceAccount
+    name: aegis-responder
+    namespace: aegis-response
+---
+# Evidence is write-once: the responder can create ConfigMaps but not read,
+# change or delete them, so a compromised responder cannot erase the trail.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aegis-responder-evidence
+  namespace: aegis-response
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aegis-responder-evidence
+  namespace: aegis-response
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aegis-responder-evidence
+subjects:
+  - kind: ServiceAccount
+    name: aegis-responder
+    namespace: aegis-response

@@ -142,3 +142,37 @@ spec:
             limits:
               cpu: 250m
               memory: 64Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: responder-pod
+  namespace: aegis
+spec:
+  serviceAccountName: aegis-responder
+  containers:
+    - name: responder
+      image: ghcr.io/ahmedelgmal310/aegis-responder@sha256:4b0f2ca3a3e4bd5f4a6e7b2d1f6b2a5f2c8a6c8f4b0a5e3d2c1b0a9f8e7d6c5b
+      securityContext:
+        readOnlyRootFilesystem: true
+      resources:
+        limits:
+          cpu: 200m
+          memory: 64Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: other-sa-token-pod
+  namespace: aegis
+spec:
+  serviceAccountName: ledger
+  containers:
+    - name: ledger
+      image: ghcr.io/ahmedelgmal310/aegis-ledger@sha256:4b0f2ca3a3e4bd5f4a6e7b2d1f6b2a5f2c8a6c8f4b0a5e3d2c1b0a9f8e7d6c5b
+      securityContext:
+        readOnlyRootFilesystem: true
+      resources:
+        limits:
+          cpu: 250m
+          memory: 64Mi
